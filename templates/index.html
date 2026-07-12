@@ -11,12 +11,38 @@
   <header class="topbar">
     <div class="topbar-title">
       <span class="dot"></span>
-      <h1>Departures</h1>
+      <div>
+        <h1>Departures</h1>
+        <p class="route-subtitle" id="route-subtitle">Loading route…</p>
+      </div>
     </div>
     <button id="pip-btn" class="pip-btn" title="Open floating mini tracker">
       ⧉ Mini Player
     </button>
   </header>
+
+  <section class="route-form-wrap">
+    <form id="route-form" class="route-form" autocomplete="off">
+      <div class="route-field">
+        <label for="from-input">From</label>
+        <input type="text" id="from-input" placeholder="e.g. Reading" />
+        <input type="hidden" id="from-code" />
+        <ul class="suggestions" id="from-suggestions"></ul>
+      </div>
+
+      <button type="button" id="swap-btn" class="swap-btn" title="Swap stations">⇄</button>
+
+      <div class="route-field">
+        <label for="to-input">To</label>
+        <input type="text" id="to-input" placeholder="e.g. London Paddington" />
+        <input type="hidden" id="to-code" />
+        <ul class="suggestions" id="to-suggestions"></ul>
+      </div>
+
+      <button type="submit" class="update-btn">Update board</button>
+    </form>
+    <p class="route-error hidden" id="route-error"></p>
+  </section>
 
   <main class="board-wrap">
     <div class="board-rows" id="board-rows">

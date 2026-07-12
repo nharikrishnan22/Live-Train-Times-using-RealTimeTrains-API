@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 print("[1/5] Python starting, imports beginning...", flush=True)
 
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO
 
 print("[2/5] Flask + Flask-SocketIO imported OK", flush=True)
@@ -42,6 +42,7 @@ RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "60"))
 RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "PAD")
 RTT_TIME_FROM = os.getenv("RTT_TIME_FROM")
 RTT_DETAILED = os.getenv("RTT_DETAILED", "true").lower() == "true"
+RTT_STOPS_URL = os.getenv("RTT_STOPS_URL", f"{RTT_BASE_URL}/data/stops")
 
 state_lock = threading.RLock()
 trains = []
@@ -51,6 +52,34 @@ trains = []
 # it's invalid/expired.
 access_token_lock = threading.RLock()
 _access_token = None
+
+# Cached station list from /data/stops, used to populate the from/to
+# autocomplete and to validate routes a client asks us to switch to.
+stops_lock = threading.RLock()
+_stops_cache = None
+
+# The route currently shown on the board. Starts from the RTT_LOCATION_CODE /
+# RTT_FILTER_DESTINATION env defaults, and can be changed live by any
+# connected client via the "set_route" socket event - the whole board is
+# shared, so this updates what everyone sees.
+def _initial_route_code(value):
+    """Strip a leading "<namespace>:" prefix and uppercase, for seeding
+    current_route from env defaults before strip_namespace_prefix exists."""
+    if not value:
+        return value
+    prefix = f"{RTT_NAMESPACE}:"
+    if value.startswith(prefix):
+        value = value[len(prefix):]
+    return value.upper()
+
+
+route_lock = threading.RLock()
+current_route = {
+    "from": _initial_route_code(RTT_LOCATION_CODE),
+    "to": _initial_route_code(RTT_FILTER_DESTINATION),
+    "from_description": None,
+    "to_description": None,
+}
 
 
 def expected_text(status, scheduled_dt, delay_minutes):
@@ -174,14 +203,28 @@ def strip_namespace_prefix(code):
     return code
 
 
+def get_current_route():
+    with route_lock:
+        return dict(current_route)
+
+
+def set_current_route(from_code, to_code, from_description=None, to_description=None):
+    with route_lock:
+        current_route["from"] = from_code
+        current_route["to"] = to_code
+        current_route["from_description"] = from_description
+        current_route["to_description"] = to_description
+
+
 def build_rtt_params(now=None):
-    """Build RTT query params using the configured window unless explicit bounds are provided."""
+    """Build RTT query params for the currently selected from/to route."""
     if now is None:
         now = datetime.now()
 
+    route = get_current_route()
     params = {
-        "code": strip_namespace_prefix(RTT_LOCATION_CODE),
-        "filterTo": strip_namespace_prefix(RTT_FILTER_DESTINATION),
+        "code": strip_namespace_prefix(route["from"]),
+        "filterTo": strip_namespace_prefix(route["to"]),
         "timeWindow": str(RTT_TIME_WINDOW),
     }
 
@@ -250,6 +293,80 @@ def fetch_rtt_services():
     return payload.get("services", [])
 
 
+def fetch_stops_from_api():
+    """Fetch the full station list from /data/stops, refreshing the access token once if it's stale."""
+    token = get_access_token()
+    payload = _rtt_request(RTT_STOPS_URL, token)
+
+    if isinstance(payload, dict) and payload.get("error") == "Invalid or expired token":
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(RTT_STOPS_URL, token)
+
+    raw_stops = payload.get("stops", []) if isinstance(payload, dict) else []
+
+    stops = [
+        {
+            "description": s.get("description"),
+            "shortCode": s.get("shortCode"),
+            "uniqueIdentity": s.get("uniqueIdentity"),
+        }
+        for s in raw_stops
+        if s.get("namespace") == RTT_NAMESPACE and s.get("description") and s.get("shortCode")
+    ]
+    stops.sort(key=lambda s: s["description"])
+    return stops
+
+
+def get_stops(force_refresh=False):
+    """Return the cached station list, fetching it on first use (or on demand)."""
+    global _stops_cache
+    with stops_lock:
+        if _stops_cache is None or force_refresh:
+            try:
+                _stops_cache = fetch_stops_from_api()
+            except Exception as exc:
+                print(f"[stops] Unable to fetch station list: {exc}", flush=True)
+                if _stops_cache is None:
+                    _stops_cache = []
+        return _stops_cache
+
+
+def initialize_route_descriptions():
+    """Backfill from/to_description for the default route once the station list is available."""
+    stops = get_stops()
+    if not stops:
+        return
+    by_code = {s["shortCode"].upper(): s["description"] for s in stops}
+    with route_lock:
+        if not current_route["from_description"]:
+            current_route["from_description"] = by_code.get(current_route["from"])
+        if not current_route["to_description"]:
+            current_route["to_description"] = by_code.get(current_route["to"])
+
+
+def fetch_and_normalize_trains():
+    services = fetch_rtt_services()
+    normalized = [
+        normalize_service_to_train(service, idx + 1)
+        for idx, service in enumerate(services[:10])
+    ]
+    normalized.sort(key=lambda t: t["_scheduled_dt"])
+    return normalized
+
+
+def refresh_and_broadcast():
+    """Fetch the latest trains for the current route and push them to every client."""
+    try:
+        normalized = fetch_and_normalize_trains()
+        with state_lock:
+            trains[:] = normalized
+            payload = public_payload(trains)
+        socketio.emit("train_update", {"trains": payload})
+    except Exception as exc:
+        print(f"[route] RTT refresh error: {exc}", flush=True)
+        socketio.emit("train_update", {"trains": []})
+
+
 def seed_trains():
     global trains
     with state_lock:
@@ -259,12 +376,7 @@ def seed_trains():
             return
 
         try:
-            services = fetch_rtt_services()
-            trains = [
-                normalize_service_to_train(service, idx + 1)
-                for idx, service in enumerate(services[:10])
-            ]
-            trains.sort(key=lambda t: t["_scheduled_dt"])
+            trains = fetch_and_normalize_trains()
         except Exception as exc:
             print(f"[4/5] RTT API unavailable: {exc}", flush=True)
             trains = []
@@ -273,26 +385,11 @@ def seed_trains():
 def tick():
     """Background loop: refreshes the board from RTT live data."""
     while True:
-        try:
-            if not RTT_TOKEN:
-                print("[tick] RTT_TOKEN is not set. Waiting for live data...", flush=True)
-                socketio.emit("train_update", {"trains": []})
-                socketio.sleep(30)
-                continue
-
-            services = fetch_rtt_services()
-            with state_lock:
-                normalized = [
-                    normalize_service_to_train(service, idx + 1)
-                    for idx, service in enumerate(services[:10])
-                ]
-                normalized.sort(key=lambda t: t["_scheduled_dt"])
-                trains[:] = normalized
-                payload = public_payload(trains)
-            socketio.emit("train_update", {"trains": payload})
-        except Exception as exc:
-            print(f"[tick] RTT refresh error: {exc}", flush=True)
+        if not RTT_TOKEN:
+            print("[tick] RTT_TOKEN is not set. Waiting for live data...", flush=True)
             socketio.emit("train_update", {"trains": []})
+        else:
+            refresh_and_broadcast()
 
         socketio.sleep(30)
 
@@ -302,11 +399,64 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/stops")
+def api_stops():
+    return jsonify({"stops": get_stops()})
+
+
 @socketio.on("connect")
 def on_connect():
     with state_lock:
         payload = public_payload(trains)
     socketio.emit("train_update", {"trains": payload})
+    socketio.emit("route_updated", get_current_route())
+
+
+@socketio.on("set_route")
+def on_set_route(data):
+    """A client is asking to point the (shared) board at a different from/to route."""
+    data = data or {}
+    from_code = strip_namespace_prefix(str(data.get("from") or "").strip()).upper()
+    to_code = strip_namespace_prefix(str(data.get("to") or "").strip()).upper()
+    from_description = data.get("fromDescription")
+    to_description = data.get("toDescription")
+
+    if not from_code or not to_code:
+        socketio.emit(
+            "route_error",
+            {"message": "Both a from and to station are required."},
+            room=request.sid,
+        )
+        return
+
+    if from_code == to_code:
+        socketio.emit(
+            "route_error",
+            {"message": "From and to can't be the same station."},
+            room=request.sid,
+        )
+        return
+
+    # Validate against the known station list when we have one; if the list
+    # is temporarily unavailable, fail open rather than blocking every route
+    # change on it.
+    stops = get_stops()
+    if stops:
+        valid_codes = {s["shortCode"].upper() for s in stops}
+        by_code = {s["shortCode"].upper(): s["description"] for s in stops}
+        if from_code not in valid_codes or to_code not in valid_codes:
+            socketio.emit(
+                "route_error",
+                {"message": "Unrecognised station - please pick one from the suggestions."},
+                room=request.sid,
+            )
+            return
+        from_description = from_description or by_code.get(from_code)
+        to_description = to_description or by_code.get(to_code)
+
+    set_current_route(from_code, to_code, from_description, to_description)
+    socketio.emit("route_updated", get_current_route())
+    refresh_and_broadcast()
 
 
 background_started = False
@@ -317,6 +467,7 @@ def start_background_thread():
     if not background_started:
         background_started = True
         seed_trains()
+        initialize_route_descriptions()
         print("[4/5] Trains seeded, starting background ticker thread...", flush=True)
         # Explicit daemon=True so this thread can never block the process
         # from exiting or interfere with the reloader.

@@ -98,5 +98,135 @@ window.TrainTracker.onUpdate(() => {
   if (window.__pipRender) window.__pipRender();
 });
 
+// --- Station autocomplete + live from/to route selection ---
+let allStops = [];
+
+async function loadStops() {
+  try {
+    const res = await fetch("/api/stops");
+    const data = await res.json();
+    allStops = data.stops || [];
+  } catch (err) {
+    console.error("Failed to load station list:", err);
+  }
+}
+
+function setupAutocomplete(inputId, codeInputId, listId) {
+  const input = document.getElementById(inputId);
+  const codeInput = document.getElementById(codeInputId);
+  const list = document.getElementById(listId);
+
+  function renderSuggestions(query) {
+    list.innerHTML = "";
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      list.classList.remove("open");
+      return;
+    }
+
+    const matches = allStops
+      .filter((s) => s.description.toLowerCase().includes(q) || s.shortCode.toLowerCase().includes(q))
+      .slice(0, 8);
+
+    if (matches.length === 0) {
+      list.classList.remove("open");
+      return;
+    }
+
+    matches.forEach((s) => {
+      const li = document.createElement("li");
+      li.textContent = `${s.description} (${s.shortCode})`;
+      // mousedown fires before the input's blur, so the click registers
+      // before we hide the suggestion list on blur
+      li.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        input.value = s.description;
+        codeInput.value = s.shortCode;
+        list.classList.remove("open");
+      });
+      list.appendChild(li);
+    });
+
+    list.classList.add("open");
+  }
+
+  input.addEventListener("input", () => {
+    codeInput.value = "";
+    renderSuggestions(input.value);
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value) renderSuggestions(input.value);
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => list.classList.remove("open"), 100);
+  });
+
+  return { input, codeInput };
+}
+
+const fromField = setupAutocomplete("from-input", "from-code", "from-suggestions");
+const toField = setupAutocomplete("to-input", "to-code", "to-suggestions");
+
+document.getElementById("swap-btn").addEventListener("click", () => {
+  const fromVal = fromField.input.value;
+  const fromCode = fromField.codeInput.value;
+  fromField.input.value = toField.input.value;
+  fromField.codeInput.value = toField.codeInput.value;
+  toField.input.value = fromVal;
+  toField.codeInput.value = fromCode;
+});
+
+const routeForm = document.getElementById("route-form");
+const routeError = document.getElementById("route-error");
+const routeSubtitle = document.getElementById("route-subtitle");
+
+routeForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  routeError.classList.add("hidden");
+
+  const fromCode = fromField.codeInput.value;
+  const toCode = toField.codeInput.value;
+
+  if (!fromCode || !toCode) {
+    routeError.textContent = "Pick a station from the suggestions for both From and To.";
+    routeError.classList.remove("hidden");
+    return;
+  }
+  if (fromCode === toCode) {
+    routeError.textContent = "From and To can't be the same station.";
+    routeError.classList.remove("hidden");
+    return;
+  }
+
+  socket.emit("set_route", {
+    from: fromCode,
+    to: toCode,
+    fromDescription: fromField.input.value,
+    toDescription: toField.input.value,
+  });
+});
+
+socket.on("route_updated", (route) => {
+  const fromDesc = route.from_description || route.from;
+  const toDesc = route.to_description || route.to;
+  routeSubtitle.textContent = `${fromDesc} → ${toDesc}`;
+
+  // Keep the form reflecting whatever route is actually live, including on
+  // first connect and when another client changes it.
+  if (route.from_description) fromField.input.value = route.from_description;
+  if (route.from) fromField.codeInput.value = route.from;
+  if (route.to_description) toField.input.value = route.to_description;
+  if (route.to) toField.codeInput.value = route.to;
+});
+
+socket.on("route_error", (err) => {
+  routeError.textContent = (err && err.message) || "Couldn't update the route.";
+  routeError.classList.remove("hidden");
+});
+
+loadStops();
+
 // Expose the render function for pip.js to reuse
 window.renderTrainsInto = renderTrains;
