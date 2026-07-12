@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Train Tracker</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-title">
+      <span class="dot"></span>
+      <h1>Departures</h1>
+    </div>
+    <button id="pip-btn" class="pip-btn" title="Open floating mini tracker">
+      ⧉ Mini Player
+    </button>
+  </header>
+
+  <main class="board-wrap">
+    <div class="board-rows" id="board-rows">
+      <p class="loading">Connecting to live feed…</p>
+    </div>
+  </main>
+
+  <p id="pip-fallback" class="fallback hidden">
+    Document Picture-in-Picture isn't supported in this browser. Try the
+    latest Chrome or Edge on desktop to use the floating mini tracker.
+  </p>
+
+  <!-- Template used to render each train card -->
+  <template id="train-row-template">
+    <div class="card" data-id="">
+      <div class="card-icon">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="5" y="3" width="14" height="13" rx="4" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="8.5" cy="13" r="1.1" fill="currentColor"/>
+          <circle cx="15.5" cy="13" r="1.1" fill="currentColor"/>
+          <path d="M8 20l-2 2M16 20l2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M5 8h14" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+      </div>
+      <div class="card-main">
+        <div class="card-time"></div>
+        <div class="card-dest"></div>
+        <div class="card-plat"></div>
+      </div>
+      <div class="card-status">
+        <span class="status-pill"></span>
+      </div>
+    </div>
+  </template>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='pip.js') }}"></script>
+</body>
+</html>
+
+
