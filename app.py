@@ -29,7 +29,13 @@ print("[3/5] Flask app + SocketIO object created OK", flush=True)
 RTT_BASE_URL = os.getenv("RTT_BASE_URL", "https://data.rtt.io").rstrip("/")
 RTT_NAMESPACE = os.getenv("RTT_NAMESPACE", "gb-nr")
 RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "gb-nr:RDG")
-RTT_BEARER_TOKEN = os.getenv("RTT_BEARER_TOKEN")
+# Credential used to obtain a short-lived access token from
+# /api/get_access_token. This is NOT the token sent to the location
+# endpoint directly - see fetch_access_token() below.
+RTT_TOKEN = os.getenv("RTT_TOKEN")
+RTT_ACCESS_TOKEN_URL = os.getenv(
+    "RTT_ACCESS_TOKEN_URL", f"{RTT_BASE_URL}/api/get_access_token"
+)
 RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "60"))
 RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "gb-nr:PAD")
 RTT_TIME_FROM = os.getenv("RTT_TIME_FROM")
@@ -37,6 +43,12 @@ RTT_DETAILED = os.getenv("RTT_DETAILED", "true").lower() == "true"
 
 state_lock = threading.RLock()
 trains = []
+
+# Cached access token for the location endpoint. Populated lazily by
+# get_access_token() and refreshed whenever the location endpoint reports
+# it's invalid/expired.
+access_token_lock = threading.RLock()
+_access_token = None
 
 
 def expected_text(status, scheduled_dt, delay_minutes):
@@ -166,29 +178,20 @@ def build_rtt_params(now=None):
     return params
 
 
-def fetch_rtt_services():
-    """Fetch services from the RTT location endpoint using an environment-backed bearer token."""
-    if not RTT_BEARER_TOKEN:
-        raise RuntimeError("RTT_BEARER_TOKEN is not set. Configure it before using the RTT API.")
-
-    params = build_rtt_params()
-
-    url = f"{RTT_BASE_URL}/{RTT_NAMESPACE}/location?{urlencode(params)}"
+def _rtt_request(url, bearer_token, method="GET"):
+    """Issue a bearer-authenticated request against the RTT API and return the parsed JSON body."""
     request = urllib.request.Request(
         url,
+        method=method,
         headers={
             "Accept": "application/json",
-            "Authorization": f"Bearer {RTT_BEARER_TOKEN}",
+            "Authorization": f"Bearer {bearer_token}",
         },
     )
-
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             body = response.read().decode("utf-8")
-            if not body:
-                return []
-            payload = json.loads(body)
-            return payload.get("services", [])
+            return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         error_text = exc.read().decode("utf-8", "ignore")
         raise RuntimeError(f"RTT API error {exc.code}: {error_text}") from exc
@@ -196,11 +199,48 @@ def fetch_rtt_services():
         raise RuntimeError(f"Unable to reach RTT API: {exc.reason}") from exc
 
 
+def fetch_access_token():
+    """Exchange RTT_TOKEN for a short-lived access token via /api/get_access_token."""
+    if not RTT_TOKEN:
+        raise RuntimeError("RTT_TOKEN is not set. Configure it before using the RTT API.")
+
+    payload = _rtt_request(RTT_ACCESS_TOKEN_URL, RTT_TOKEN, method="POST")
+
+    token = payload.get("token") or payload.get("access_token")
+    if not token:
+        raise RuntimeError(f"RTT access token response did not include a token: {payload}")
+    return token
+
+
+def get_access_token(force_refresh=False):
+    """Return a cached access token, fetching (or refetching) one if needed."""
+    global _access_token
+    with access_token_lock:
+        if _access_token is None or force_refresh:
+            _access_token = fetch_access_token()
+        return _access_token
+
+
+def fetch_rtt_services():
+    """Fetch services from the RTT location endpoint, refreshing the access token once if it's stale."""
+    params = build_rtt_params()
+    url = f"{RTT_BASE_URL}/{RTT_NAMESPACE}/location?{urlencode(params)}"
+
+    token = get_access_token()
+    payload = _rtt_request(url, token)
+
+    if isinstance(payload, dict) and payload.get("error") == "Invalid or expired token":
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(url, token)
+
+    return payload.get("services", [])
+
+
 def seed_trains():
     global trains
     with state_lock:
-        if not RTT_BEARER_TOKEN:
-            print("[4/5] RTT_BEARER_TOKEN is not set. Waiting for live data...", flush=True)
+        if not RTT_TOKEN:
+            print("[4/5] RTT_TOKEN is not set. Waiting for live data...", flush=True)
             trains = []
             return
 
@@ -220,8 +260,8 @@ def tick():
     """Background loop: refreshes the board from RTT live data."""
     while True:
         try:
-            if not RTT_BEARER_TOKEN:
-                print("[tick] RTT_BEARER_TOKEN is not set. Waiting for live data...", flush=True)
+            if not RTT_TOKEN:
+                print("[tick] RTT_TOKEN is not set. Waiting for live data...", flush=True)
                 socketio.emit("train_update", {"trains": []})
                 socketio.sleep(30)
                 continue
