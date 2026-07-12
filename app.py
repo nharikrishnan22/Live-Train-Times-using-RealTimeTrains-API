@@ -28,7 +28,9 @@ print("[3/5] Flask app + SocketIO object created OK", flush=True)
 
 RTT_BASE_URL = os.getenv("RTT_BASE_URL", "https://data.rtt.io").rstrip("/")
 RTT_NAMESPACE = os.getenv("RTT_NAMESPACE", "gb-nr")
-RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "gb-nr:RDG")
+# Plain short code, e.g. "RDG" - the namespace is already part of the URL
+# path (/{RTT_NAMESPACE}/location), so it must NOT be repeated here.
+RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "RDG")
 # Credential used to obtain a short-lived access token from
 # /api/get_access_token. This is NOT the token sent to the location
 # endpoint directly - see fetch_access_token() below.
@@ -37,7 +39,7 @@ RTT_ACCESS_TOKEN_URL = os.getenv(
     "RTT_ACCESS_TOKEN_URL", f"{RTT_BASE_URL}/api/get_access_token"
 )
 RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "60"))
-RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "gb-nr:PAD")
+RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "PAD")
 RTT_TIME_FROM = os.getenv("RTT_TIME_FROM")
 RTT_DETAILED = os.getenv("RTT_DETAILED", "true").lower() == "true"
 
@@ -160,14 +162,26 @@ def public_payload(train_list):
     ]
 
 
+def strip_namespace_prefix(code):
+    """Location/filter codes must be plain short codes (e.g. "RDG"), not
+    namespaced ones (e.g. "gb-nr:RDG") - the namespace already lives in the
+    URL path. Strip it defensively in case it's set that way in the env."""
+    if not code:
+        return code
+    prefix = f"{RTT_NAMESPACE}:"
+    if code.startswith(prefix):
+        return code[len(prefix):]
+    return code
+
+
 def build_rtt_params(now=None):
     """Build RTT query params using the configured window unless explicit bounds are provided."""
     if now is None:
         now = datetime.now()
 
     params = {
-        "code": RTT_LOCATION_CODE,
-        "filterTo": RTT_FILTER_DESTINATION,
+        "code": strip_namespace_prefix(RTT_LOCATION_CODE),
+        "filterTo": strip_namespace_prefix(RTT_FILTER_DESTINATION),
         "timeWindow": str(RTT_TIME_WINDOW),
     }
 
