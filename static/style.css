@@ -72,6 +72,122 @@ body {
   50% { opacity: 0.45; }
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--navy);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.icon-btn:hover {
+  background: var(--mint-bg);
+  color: var(--mint);
+}
+
+.notify-settings {
+  position: relative;
+}
+
+.notify-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 240px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(22, 0, 120, 0.14);
+  padding: 14px;
+}
+
+.notify-panel-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.notify-panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 10px;
+}
+
+.notify-permission-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--mint-bg);
+  color: var(--mint);
+}
+
+.notify-permission-btn.granted {
+  background: var(--mint);
+  color: #fff;
+  cursor: default;
+}
+
+.notify-permission-btn.blocked {
+  background: var(--red-bg);
+  color: var(--red);
+  cursor: not-allowed;
+}
+
+.notify-permission-btn:disabled {
+  opacity: 0.85;
+}
+
+.notify-panel-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--navy);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.notify-panel-check input {
+  accent-color: var(--mint);
+  width: 15px;
+  height: 15px;
+}
+
+.notify-panel-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
 .pip-btn {
   background: var(--mint-bg);
   border: 1px solid transparent;
@@ -306,6 +422,40 @@ body {
 
 .card-status {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notify-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.notify-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.notify-toggle:hover {
+  color: var(--mint);
+  border-color: var(--mint);
+}
+
+.notify-toggle.active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
 }
 
 .status-pill {
