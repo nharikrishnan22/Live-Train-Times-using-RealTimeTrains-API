@@ -273,9 +273,6 @@ async function toggleWatch(id) {
   if (NotifySettings.watchedIds.has(idKey)) {
     NotifySettings.watchedIds.delete(idKey);
   } else {
-    if (NotifySettings.onlyOneTrain) {
-      NotifySettings.watchedIds.clear();
-    }
     NotifySettings.watchedIds.add(idKey);
     await ensurePermission();
   }
@@ -288,14 +285,6 @@ async function toggleWatch(id) {
 const notifySettingsBtn = document.getElementById("notify-settings-btn");
 const notifyPanel = document.getElementById("notify-panel");
 const notifyPermissionBtn = document.getElementById("notify-permission-btn");
-const notifyOneOnlyCheckbox = document.getElementById("notify-one-only");
-
-if (notifyOneOnlyCheckbox) {
-  notifyOneOnlyCheckbox.checked = NotifySettings.onlyOneTrain;
-  notifyOneOnlyCheckbox.addEventListener("change", () => {
-    setOnlyOneTrain(notifyOneOnlyCheckbox.checked);
-  });
-}
 
 if (notifyPermissionBtn) {
   notifyPermissionBtn.addEventListener("click", () => {
