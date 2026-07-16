@@ -1,0 +1,2 @@
+Set in powershell:
+$env:RTT_TOKEN="<Insert RTT API KEY from dashboard>"
