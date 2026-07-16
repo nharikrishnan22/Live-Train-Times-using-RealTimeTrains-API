@@ -16,9 +16,33 @@
         <p class="route-subtitle" id="route-subtitle">Loading route…</p>
       </div>
     </div>
-    <button id="pip-btn" class="pip-btn" title="Open floating mini tracker">
-      ⧉ Mini Player
-    </button>
+    <div class="header-actions">
+      <div class="notify-settings">
+        <button id="notify-settings-btn" class="icon-btn" title="Notification settings" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3a5 5 0 0 0-5 5v2.6c0 .5-.15.99-.42 1.4L5 14.5c-.6.9.04 2.1 1.12 2.1h11.76c1.08 0 1.72-1.2 1.12-2.1l-1.58-2.5a2.5 2.5 0 0 1-.42-1.4V8a5 5 0 0 0-5-5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M9.5 19a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div class="notify-panel hidden" id="notify-panel">
+          <p class="notify-panel-title">Notifications</p>
+          <div class="notify-panel-row">
+            <span>Desktop alerts</span>
+            <button id="notify-permission-btn" class="notify-permission-btn" type="button">Enable</button>
+          </div>
+          <label class="notify-panel-check">
+            <input type="checkbox" id="notify-one-only" checked />
+            Only track one train at a time
+          </label>
+          <p class="notify-panel-hint">
+            Tap the bell on a departure to get alerted the moment it's delayed or cancelled.
+          </p>
+        </div>
+      </div>
+      <button id="pip-btn" class="pip-btn" title="Open floating mini tracker">
+        ⧉ Mini Player
+      </button>
+    </div>
   </header>
 
   <section class="route-form-wrap">
@@ -74,6 +98,12 @@
       </div>
       <div class="card-status">
         <span class="status-pill"></span>
+        <button type="button" class="notify-toggle" aria-pressed="false" title="Notify me if this train is delayed or cancelled">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3a5 5 0 0 0-5 5v2.6c0 .5-.15.99-.42 1.4L5 14.5c-.6.9.04 2.1 1.12 2.1h11.76c1.08 0 1.72-1.2 1.12-2.1l-1.58-2.5a2.5 2.5 0 0 1-.42-1.4V8a5 5 0 0 0-5-5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M9.5 19a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
     </div>
   </template>

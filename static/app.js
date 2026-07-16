@@ -74,6 +74,16 @@ function renderTrains(trains, container, isPip = false) {
     pill.textContent = t.expected;
     pill.className = `status-pill ${statusClass(t.status)}`;
 
+    const notifyBtn = card.querySelector(".notify-toggle");
+    if (notifyBtn) {
+      const isWatched = NotifySettings.watchedIds.has(String(t.id));
+      notifyBtn.classList.toggle("active", isWatched);
+      notifyBtn.setAttribute("aria-pressed", isWatched ? "true" : "false");
+      notifyBtn.title = isWatched
+        ? "Notifications on for this train — tap to turn off"
+        : "Notify me if this train is delayed or cancelled";
+    }
+
     container.appendChild(card);
   });
 }
@@ -93,10 +103,232 @@ socket.on("train_update", (data) => {
   window.TrainTracker.setTrains(data.trains);
 });
 
-window.TrainTracker.onUpdate(() => {
+window.TrainTracker.onUpdate((trainList) => {
+  checkWatchedTrains(trainList);
   renderBoard();
   if (window.__pipRender) window.__pipRender();
 });
+
+// --- Delay / cancellation desktop notifications ---
+// Notifications are opt-in per train (tap the bell on a row). We never read
+// a delay-in-minutes field from the server - the "expected" text only ever
+// carries a clock time (e.g. "Exp 20:32"), so the delay shown to the user is
+// worked out here by comparing it against the scheduled "time".
+const NotifySettings = {
+  onlyOneTrain: true,
+  watchedIds: new Set(),
+};
+
+// Remembers the last status/expected text we notified about per train id,
+// so a train sitting at "Delayed" doesn't re-notify every 30s tick - only
+// when something about it actually changes (goes cancelled, delay grows, etc).
+const notifyMemory = new Map();
+
+function loadNotifyPrefs() {
+  try {
+    const raw = localStorage.getItem("train-tracker-notify-prefs");
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.onlyOneTrain === "boolean") {
+      NotifySettings.onlyOneTrain = parsed.onlyOneTrain;
+    }
+    if (Array.isArray(parsed.watchedIds)) {
+      NotifySettings.watchedIds = new Set(parsed.watchedIds.map(String));
+    }
+  } catch (err) {
+    console.warn("Couldn't load notification preferences:", err);
+  }
+}
+
+function saveNotifyPrefs() {
+  try {
+    localStorage.setItem(
+      "train-tracker-notify-prefs",
+      JSON.stringify({
+        onlyOneTrain: NotifySettings.onlyOneTrain,
+        watchedIds: Array.from(NotifySettings.watchedIds),
+      })
+    );
+  } catch (err) {
+    console.warn("Couldn't save notification preferences:", err);
+  }
+}
+
+loadNotifyPrefs();
+
+function notificationsSupported() {
+  return "Notification" in window;
+}
+
+function notifyPermissionLabel() {
+  if (!notificationsSupported()) return "Not supported";
+  if (Notification.permission === "granted") return "Enabled";
+  if (Notification.permission === "denied") return "Blocked";
+  return "Enable";
+}
+
+function refreshPermissionUI() {
+  const btn = document.getElementById("notify-permission-btn");
+  if (!btn) return;
+  const supported = notificationsSupported();
+  btn.textContent = notifyPermissionLabel();
+  btn.disabled = !supported || Notification.permission !== "default";
+  btn.classList.toggle("granted", supported && Notification.permission === "granted");
+  btn.classList.toggle("blocked", supported && Notification.permission === "denied");
+}
+
+async function ensurePermission() {
+  if (!notificationsSupported()) return "unsupported";
+  if (Notification.permission === "default") {
+    const result = await Notification.requestPermission();
+    refreshPermissionUI();
+    return result;
+  }
+  return Notification.permission;
+}
+
+// Parses a "HH:MM" clock time into minutes since midnight.
+function timeToMinutes(text) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec((text || "").trim());
+  if (!match) return null;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+// Pulls a clock time out of an "expected" string like "Exp 20:32".
+function extractClockTime(text) {
+  const match = /(\d{1,2}:\d{2})/.exec(text || "");
+  return match ? match[1] : null;
+}
+
+// Infers how many minutes late a train is by diffing its scheduled "time"
+// against the clock time embedded in "expected" - no delay field needed.
+function inferDelayMinutes(train) {
+  const scheduled = timeToMinutes(train.time);
+  const expected = timeToMinutes(extractClockTime(train.expected));
+  if (scheduled == null || expected == null) return null;
+  let diff = expected - scheduled;
+  if (diff < 0) diff += 24 * 60; // crossed midnight
+  return diff;
+}
+
+function sendDesktopNotification(train) {
+  if (!notificationsSupported() || Notification.permission !== "granted") return;
+
+  let title;
+  let body;
+
+  if (train.status === "Cancelled") {
+    title = `Cancelled — ${train.time} to ${train.destination}`;
+    body = "This train has been cancelled.";
+  } else {
+    const minutes = inferDelayMinutes(train);
+    title = `Delayed — ${train.time} to ${train.destination}`;
+    body =
+      minutes != null
+        ? `Delayed by ${minutes} minute${minutes === 1 ? "" : "s"}`
+        : train.expected || "This train is running late.";
+    if (train.platform && train.platform !== "—") {
+      body += ` · Platform ${train.platform}`;
+    }
+  }
+
+  try {
+    // tag = one notification per train id, so a repeat alert replaces
+    // the old one instead of piling up
+    new Notification(title, { body, tag: `train-${train.id}` });
+  } catch (err) {
+    console.error("Failed to show desktop notification:", err);
+  }
+}
+
+function checkWatchedTrains(trainList) {
+  (trainList || []).forEach((t) => {
+    const idKey = String(t.id);
+    const isBad = t.status === "Delayed" || t.status === "Cancelled";
+    const prev = notifyMemory.get(idKey);
+    const changed = !prev || prev.status !== t.status || prev.expected !== t.expected;
+
+    if (NotifySettings.watchedIds.has(idKey) && isBad && changed) {
+      sendDesktopNotification(t);
+    }
+
+    notifyMemory.set(idKey, { status: t.status, expected: t.expected });
+  });
+}
+
+function setOnlyOneTrain(enabled) {
+  NotifySettings.onlyOneTrain = enabled;
+  if (enabled && NotifySettings.watchedIds.size > 1) {
+    // Keep whichever was watched most recently, drop the rest
+    const keep = Array.from(NotifySettings.watchedIds).pop();
+    NotifySettings.watchedIds = new Set([keep]);
+  }
+  saveNotifyPrefs();
+  renderBoard();
+}
+
+async function toggleWatch(id) {
+  const idKey = String(id);
+
+  if (NotifySettings.watchedIds.has(idKey)) {
+    NotifySettings.watchedIds.delete(idKey);
+  } else {
+    if (NotifySettings.onlyOneTrain) {
+      NotifySettings.watchedIds.clear();
+    }
+    NotifySettings.watchedIds.add(idKey);
+    await ensurePermission();
+  }
+
+  saveNotifyPrefs();
+  renderBoard();
+}
+
+// --- Notification settings panel wiring ---
+const notifySettingsBtn = document.getElementById("notify-settings-btn");
+const notifyPanel = document.getElementById("notify-panel");
+const notifyPermissionBtn = document.getElementById("notify-permission-btn");
+const notifyOneOnlyCheckbox = document.getElementById("notify-one-only");
+
+if (notifyOneOnlyCheckbox) {
+  notifyOneOnlyCheckbox.checked = NotifySettings.onlyOneTrain;
+  notifyOneOnlyCheckbox.addEventListener("change", () => {
+    setOnlyOneTrain(notifyOneOnlyCheckbox.checked);
+  });
+}
+
+if (notifyPermissionBtn) {
+  notifyPermissionBtn.addEventListener("click", () => {
+    ensurePermission();
+  });
+}
+
+if (notifySettingsBtn && notifyPanel) {
+  notifySettingsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = notifyPanel.classList.contains("hidden");
+    notifyPanel.classList.toggle("hidden", !willOpen);
+    notifySettingsBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!notifyPanel.classList.contains("hidden") && !notifyPanel.contains(e.target) && e.target !== notifySettingsBtn) {
+      notifyPanel.classList.add("hidden");
+      notifySettingsBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
+// Per-row bell taps, delegated so it keeps working as rows re-render
+boardRows.addEventListener("click", (e) => {
+  const btn = e.target.closest(".notify-toggle");
+  if (!btn) return;
+  const card = btn.closest(".card");
+  if (!card) return;
+  toggleWatch(card.dataset.id);
+});
+
+refreshPermissionUI();
 
 // --- Station autocomplete + live from/to route selection ---
 let allStops = [];
