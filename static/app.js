@@ -115,7 +115,6 @@ window.TrainTracker.onUpdate((trainList) => {
 // carries a clock time (e.g. "Exp 20:32"), so the delay shown to the user is
 // worked out here by comparing it against the scheduled "time".
 const NotifySettings = {
-  onlyOneTrain: true,
   watchedIds: new Set(),
 };
 
@@ -129,9 +128,6 @@ function loadNotifyPrefs() {
     const raw = localStorage.getItem("train-tracker-notify-prefs");
     if (!raw) return;
     const parsed = JSON.parse(raw);
-    if (typeof parsed.onlyOneTrain === "boolean") {
-      NotifySettings.onlyOneTrain = parsed.onlyOneTrain;
-    }
     if (Array.isArray(parsed.watchedIds)) {
       NotifySettings.watchedIds = new Set(parsed.watchedIds.map(String));
     }
@@ -145,8 +141,7 @@ function saveNotifyPrefs() {
     localStorage.setItem(
       "train-tracker-notify-prefs",
       JSON.stringify({
-        onlyOneTrain: NotifySettings.onlyOneTrain,
-        watchedIds: Array.from(NotifySettings.watchedIds),
+        watchedIds: Array.from(NotifySettings.watchedIds)
       })
     );
   } catch (err) {
@@ -254,17 +249,6 @@ function checkWatchedTrains(trainList) {
 
     notifyMemory.set(idKey, { status: t.status, expected: t.expected });
   });
-}
-
-function setOnlyOneTrain(enabled) {
-  NotifySettings.onlyOneTrain = enabled;
-  if (enabled && NotifySettings.watchedIds.size > 1) {
-    // Keep whichever was watched most recently, drop the rest
-    const keep = Array.from(NotifySettings.watchedIds).pop();
-    NotifySettings.watchedIds = new Set([keep]);
-  }
-  saveNotifyPrefs();
-  renderBoard();
 }
 
 async function toggleWatch(id) {
