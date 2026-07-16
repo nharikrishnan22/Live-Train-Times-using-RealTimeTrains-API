@@ -20,6 +20,13 @@ from flask_socketio import SocketIO
 
 print("[2/5] Flask + Flask-SocketIO imported OK", flush=True)
 
+# RTT_TOKEN is the only secret we load from a .env file (via python-dotenv).
+# Everything else stays a regular env var / default, set directly in the
+# shell or deployment environment rather than in .env.
+from dotenv import load_dotenv
+
+load_dotenv()
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "train-tracker-dev-secret")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -34,6 +41,8 @@ RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "RDG")
 # Credential used to obtain a short-lived access token from
 # /api/get_access_token. This is NOT the token sent to the location
 # endpoint directly - see fetch_access_token() below.
+# Loaded from a local .env file (via load_dotenv() above) - keep RTT_TOKEN
+# out of shell history / process env and out of source control.
 RTT_TOKEN = os.getenv("RTT_TOKEN")
 RTT_ACCESS_TOKEN_URL = os.getenv(
     "RTT_ACCESS_TOKEN_URL", f"{RTT_BASE_URL}/api/get_access_token"
