@@ -27,6 +27,16 @@ window.TrainTracker = {
   },
 };
 
+// A train's server-provided "id" tracks its row/position in the feed, not
+// the physical service - as earlier trains depart and drop off the board,
+// later trains shift up and can end up wearing a different id. Notifications
+// need to stick to the actual train, so we key off its scheduled time and
+// destination instead, which stay the same for that service regardless of
+// where it currently sits on the board.
+function trainKey(t) {
+  return `${t.time}__${t.destination}`;
+}
+
 function statusClass(status) {
   if (status === "Delayed") return "status-delayed";
   if (status === "Cancelled") return "status-cancelled";
@@ -65,7 +75,7 @@ function renderTrains(trains, container, isPip = false) {
       card = rowTemplate.content.firstElementChild.cloneNode(true);
     }
 
-    card.dataset.id = t.id;
+    card.dataset.id = trainKey(t);
     card.querySelector(".card-time").textContent = t.time;
     card.querySelector(".card-dest").textContent = t.destination;
     card.querySelector(".card-plat").textContent = t.platform;
@@ -76,7 +86,7 @@ function renderTrains(trains, container, isPip = false) {
 
     const notifyBtn = card.querySelector(".notify-toggle");
     if (notifyBtn) {
-      const isWatched = NotifySettings.watchedIds.has(String(t.id));
+      const isWatched = NotifySettings.watchedIds.has(trainKey(t));
       notifyBtn.classList.toggle("active", isWatched);
       notifyBtn.setAttribute("aria-pressed", isWatched ? "true" : "false");
       notifyBtn.title = isWatched
@@ -150,6 +160,18 @@ function saveNotifyPrefs() {
 }
 
 loadNotifyPrefs();
+
+// Notification watches are meant to last for the current session only -
+// clear them out once the app is closed so the next visit starts fresh.
+function clearNotifyPrefsOnExit() {
+  try {
+    localStorage.removeItem("train-tracker-notify-prefs");
+  } catch (err) {
+    console.warn("Couldn't clear notification preferences:", err);
+  }
+}
+
+window.addEventListener("pagehide", clearNotifyPrefsOnExit);
 
 function notificationsSupported() {
   return "Notification" in window;
@@ -230,7 +252,7 @@ function sendDesktopNotification(train) {
   try {
     // tag = one notification per train id, so a repeat alert replaces
     // the old one instead of piling up
-    new Notification(title, { body, tag: `train-${train.id}` });
+    new Notification(title, { body, tag: `train-${trainKey(train)}` });
   } catch (err) {
     console.error("Failed to show desktop notification:", err);
   }
@@ -238,7 +260,7 @@ function sendDesktopNotification(train) {
 
 function checkWatchedTrains(trainList) {
   (trainList || []).forEach((t) => {
-    const idKey = String(t.id);
+    const idKey = trainKey(t);
     const isBad = t.status === "Delayed" || t.status === "Cancelled";
     const prev = notifyMemory.get(idKey);
     const changed = !prev || prev.status !== t.status || prev.expected !== t.expected;
@@ -419,11 +441,18 @@ socket.on("route_updated", (route) => {
   routeSubtitle.textContent = `${fromDesc} → ${toDesc}`;
 
   // Keep the form reflecting whatever route is actually live, including on
-  // first connect and when another client changes it.
-  if (route.from_description) fromField.input.value = route.from_description;
-  if (route.from) fromField.codeInput.value = route.from;
-  if (route.to_description) toField.input.value = route.to_description;
-  if (route.to) toField.codeInput.value = route.to;
+  // first connect and when another client changes it - but don't stomp on
+  // a field the user is actively typing a new search into, or a route
+  // update mid-search (e.g. from a periodic refresh) wipes out what they
+  // were about to select.
+  if (document.activeElement !== fromField.input) {
+    if (route.from_description) fromField.input.value = route.from_description;
+    if (route.from) fromField.codeInput.value = route.from;
+  }
+  if (document.activeElement !== toField.input) {
+    if (route.to_description) toField.input.value = route.to_description;
+    if (route.to) toField.codeInput.value = route.to;
+  }
 });
 
 socket.on("route_error", (err) => {
