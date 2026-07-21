@@ -268,18 +268,44 @@ function checkWatchedTrains(trainList) {
     const isBad = t.status === "Delayed" || t.status === "Cancelled";
     const prev = notifyMemory.get(idKey);
     const wasBad = prev && (prev.status === "Delayed" || prev.status === "Cancelled");
-    const changed = !prev || prev.status !== t.status || prev.expected !== t.expected;
 
+    // Calculate current and previous delay in minutes
+    const currentDelay = inferDelayMinutes(t) || 0;
+    const prevDelay = prev ? (prev.delayMinutes || 0) : 0;
+    const delayDiff = Math.abs(currentDelay - prevDelay);
+
+    // Determine if the time shift warrants a notification
+    let significantTimeChange = false;
+    if (currentDelay < 3) {
+      // Under 3 minutes: notify on any shift in time
+      significantTimeChange = currentDelay !== prevDelay;
+    } else {
+      // 3+ minutes: notify only if the delay changes by 3+ minutes
+      significantTimeChange = delayDiff >= 3;
+    }
+
+    const statusChanged = !prev || prev.status !== t.status;
     const shouldNotify =
       NotifySettings.watchedIds.has(idKey) &&
-      changed &&
-      (isBad || (!isBad && wasBad)); // fire on entering bad state, or recovering from one
+      (statusChanged || significantTimeChange) &&
+      (isBad || (!isBad && wasBad)); // Notify on bad state or recovery
 
     if (shouldNotify) {
       sendDesktopNotification(t);
+      // Update memory only when we actually notify
+      notifyMemory.set(idKey, {
+        status: t.status,
+        expected: t.expected,
+        delayMinutes: currentDelay,
+      });
+    } else if (!prev) {
+      // Seed initial state if not present
+      notifyMemory.set(idKey, {
+        status: t.status,
+        expected: t.expected,
+        delayMinutes: currentDelay,
+      });
     }
-
-    notifyMemory.set(idKey, { status: t.status, expected: t.expected });
   });
 }
 
@@ -295,8 +321,13 @@ async function toggleWatch(id) {
     // (more delayed, less delayed, cancelled, back on time) rather than
     // firing immediately just because we pressed the bell.
     const current = window.TrainTracker.trains.find((t) => trainKey(t) === idKey);
+    const current = window.TrainTracker.trains.find((t) => trainKey(t) === idKey);
     if (current) {
-      notifyMemory.set(idKey, { status: current.status, expected: current.expected });
+      notifyMemory.set(idKey, { 
+        status: current.status, 
+        expected: current.expected,
+        delayMinutes: inferDelayMinutes(current) || 0
+      });
     } else {
       notifyMemory.delete(idKey);
     }
