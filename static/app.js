@@ -242,17 +242,22 @@ function sendDesktopNotification(train, prevDelay = 0) {
     title = `Delayed — ${train.time} to ${train.destination}`;
 
     if (minutes != null) {
-      if (prevDelay > minutes) {
-        // Train made up time!
-        title = `Earlier Expected — ${train.time} to ${train.destination}`;
-        body = `Delay reduced to ${minutes} min${minutes === 1 ? "" : "s"} (was ${prevDelay} mins)`;
-      } else {
-        // Delay increased or fresh delay
-        body = `Delayed by ${minutes} minute${minutes === 1 ? "" : "s"}`;
-      }
+    if (prevDelay > minutes && minutes > 0) {
+      // Train made up time! (still running late)
+      title = `Earlier Expected — ${train.time} to ${train.destination}`;
+      body = `Delay reduced to ${minutes} min${minutes === 1 ? "" : "s"} (was ${prevDelay} mins)`;
+    } else if (prevDelay > 0 && minutes > prevDelay) {
+      // Delay increased
+      title = `Delayed — ${train.time} to ${train.destination}`;
+      body = `Delay increased to ${minutes} min${minutes === 1 ? "" : "s"} (was ${prevDelay} mins)`;
     } else {
-      body = train.expected || "This train is running late.";
+      // Initial delay notification (or 0 min fallback)
+      title = `Delayed — ${train.time} to ${train.destination}`;
+      body = `Delayed by ${minutes} minute${minutes === 1 ? "" : "s"}`;
     }
+  } else {
+    body = train.expected || "This train is running late.";
+  }
 
     if (train.platform && train.platform !== "—") {
       body += ` · Platform ${train.platform}`;
