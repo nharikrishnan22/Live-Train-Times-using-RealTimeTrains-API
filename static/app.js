@@ -228,7 +228,7 @@ function inferDelayMinutes(train) {
   return diff;
 }
 
-function sendDesktopNotification(train) {
+function sendDesktopNotification(train, prevDelay = 0) {
   if (!notificationsSupported() || Notification.permission !== "granted") return;
 
   let title;
@@ -240,10 +240,20 @@ function sendDesktopNotification(train) {
   } else if (train.status === "Delayed") {
     const minutes = inferDelayMinutes(train);
     title = `Delayed — ${train.time} to ${train.destination}`;
-    body =
-      minutes != null
-        ? `Delayed by ${minutes} minute${minutes === 1 ? "" : "s"}`
-        : train.expected || "This train is running late.";
+
+    if (minutes != null) {
+      if (prevDelay > minutes) {
+        // Train made up time!
+        title = `Earlier Expected — ${train.time} to ${train.destination}`;
+        body = `Delay reduced to ${minutes} min${minutes === 1 ? "" : "s"} (was ${prevDelay} mins)`;
+      } else {
+        // Delay increased or fresh delay
+        body = `Delayed by ${minutes} minute${minutes === 1 ? "" : "s"}`;
+      }
+    } else {
+      body = train.expected || "This train is running late.";
+    }
+
     if (train.platform && train.platform !== "—") {
       body += ` · Platform ${train.platform}`;
     }
@@ -291,7 +301,7 @@ function checkWatchedTrains(trainList) {
       (isBad || (!isBad && wasBad)); // Notify on bad state or recovery
 
     if (shouldNotify) {
-      sendDesktopNotification(t);
+      sendDesktopNotification(t, prevDelay);
       // Update memory only when we actually notify
       notifyMemory.set(idKey, {
         status: t.status,
