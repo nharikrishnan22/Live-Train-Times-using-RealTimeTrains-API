@@ -321,7 +321,6 @@ async function toggleWatch(id) {
     // (more delayed, less delayed, cancelled, back on time) rather than
     // firing immediately just because we pressed the bell.
     const current = window.TrainTracker.trains.find((t) => trainKey(t) === idKey);
-    const current = window.TrainTracker.trains.find((t) => trainKey(t) === idKey);
     if (current) {
       notifyMemory.set(idKey, { 
         status: current.status, 
