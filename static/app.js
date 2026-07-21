@@ -237,7 +237,7 @@ function sendDesktopNotification(train) {
   if (train.status === "Cancelled") {
     title = `Cancelled — ${train.time} to ${train.destination}`;
     body = "This train has been cancelled.";
-  } else {
+  } else if (train.status === "Delayed") {
     const minutes = inferDelayMinutes(train);
     title = `Delayed — ${train.time} to ${train.destination}`;
     body =
@@ -247,11 +247,15 @@ function sendDesktopNotification(train) {
     if (train.platform && train.platform !== "—") {
       body += ` · Platform ${train.platform}`;
     }
+  } else {
+    title = `Back on time — ${train.time} to ${train.destination}`;
+    body = "This train is now running on time.";
+    if (train.platform && train.platform !== "—") {
+      body += ` · Platform ${train.platform}`;
+    }
   }
 
   try {
-    // tag = one notification per train id, so a repeat alert replaces
-    // the old one instead of piling up
     new Notification(title, { body, tag: `train-${trainKey(train)}` });
   } catch (err) {
     console.error("Failed to show desktop notification:", err);
@@ -263,9 +267,15 @@ function checkWatchedTrains(trainList) {
     const idKey = trainKey(t);
     const isBad = t.status === "Delayed" || t.status === "Cancelled";
     const prev = notifyMemory.get(idKey);
+    const wasBad = prev && (prev.status === "Delayed" || prev.status === "Cancelled");
     const changed = !prev || prev.status !== t.status || prev.expected !== t.expected;
 
-    if (NotifySettings.watchedIds.has(idKey) && isBad && changed) {
+    const shouldNotify =
+      NotifySettings.watchedIds.has(idKey) &&
+      changed &&
+      (isBad || (!isBad && wasBad)); // fire on entering bad state, or recovering from one
+
+    if (shouldNotify) {
       sendDesktopNotification(t);
     }
 
@@ -280,6 +290,16 @@ async function toggleWatch(id) {
     NotifySettings.watchedIds.delete(idKey);
   } else {
     NotifySettings.watchedIds.add(idKey);
+    // Seed memory with the train's current status/expected instead of
+    // clearing it, so the next update only notifies on an actual change
+    // (more delayed, less delayed, cancelled, back on time) rather than
+    // firing immediately just because we pressed the bell.
+    const current = window.TrainTracker.trains.find((t) => trainKey(t) === idKey);
+    if (current) {
+      notifyMemory.set(idKey, { status: current.status, expected: current.expected });
+    } else {
+      notifyMemory.delete(idKey);
+    }
     await ensurePermission();
   }
 
