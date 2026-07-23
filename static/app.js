@@ -13,6 +13,21 @@ const TRAIN_ICON_SVG = `
   </svg>
 `;
 
+const BUS_ICON_SVG = `
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="4" width="16" height="12" rx="3" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M4 10h16" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M8 4v6M16 4v6" stroke="currentColor" stroke-width="1.6"/>
+    <circle cx="8" cy="19" r="1.4" fill="currentColor"/>
+    <circle cx="16" cy="19" r="1.4" fill="currentColor"/>
+    <path d="M6.5 16.5h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </svg>
+`;
+
+function iconSvgFor(train) {
+  return (train.mode === "BUS") ? BUS_ICON_SVG : TRAIN_ICON_SVG;
+}
+
 // Shared, global state so pip.js (loaded separately, and running inside the
 // floating PiP window) can read the latest trains without a second socket.
 window.TrainTracker = {
@@ -61,7 +76,7 @@ function renderTrains(trains, container, isPip = false) {
       card = document.createElement("div");
       card.className = "card";
       card.innerHTML = `
-        <div class="card-icon">${TRAIN_ICON_SVG}</div>
+        <div class="card-icon">${iconSvgFor(t)}</div>
         <div class="card-main">
           <div class="card-time"></div>
           <div class="card-dest"></div>
@@ -73,6 +88,7 @@ function renderTrains(trains, container, isPip = false) {
       `;
     } else {
       card = rowTemplate.content.firstElementChild.cloneNode(true);
+      card.querySelector(".card-icon").innerHTML = iconSvgFor(t);
     }
 
     card.dataset.id = trainKey(t);

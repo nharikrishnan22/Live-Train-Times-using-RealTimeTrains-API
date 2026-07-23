@@ -180,6 +180,9 @@ def normalize_service_to_train(service, train_id):
     )
     platform = str(platform)
 
+    schedule_metadata = service.get("scheduleMetadata", {}) or {}
+    mode = schedule_metadata.get("modeType")
+
     return {
         "id": train_id,
         "destination": destination,
@@ -187,6 +190,7 @@ def normalize_service_to_train(service, train_id):
         "time": scheduled_dt.strftime("%H:%M"),
         "status": status,
         "expected": expected,
+        "mode": mode,
         "_scheduled_dt": scheduled_dt,
         "_delay_minutes": delay_minutes,
     }
