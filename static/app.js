@@ -14,18 +14,13 @@ const TRAIN_ICON_SVG = `
 `;
 
 const BUS_ICON_SVG = `
-  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="4" width="16" height="12" rx="3" stroke="currentColor" stroke-width="1.6"/>
-    <path d="M4 10h16" stroke="currentColor" stroke-width="1.6"/>
-    <path d="M8 4v6M16 4v6" stroke="currentColor" stroke-width="1.6"/>
-    <circle cx="8" cy="19" r="1.4" fill="currentColor"/>
-    <circle cx="16" cy="19" r="1.4" fill="currentColor"/>
-    <path d="M6.5 16.5h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <path fill="currentColor" fill-rule="nonzero" d="M18.86 3.505a.75.75 0 0 1 .64.742V6H21a.75.75 0 0 1 .75.75v1.5a.75.75 0 1 1-1.5 0V7.5h-.75v9.25c0 .74-.285 1.413-.75 1.909v1.592a.75.75 0 1 1-1.5 0l.001-.785c-.14.023-.283.035-.43.035H7.179c-.146 0-.289-.012-.428-.035v.785a.75.75 0 1 1-1.5 0v-1.591a2.783 2.783 0 0 1-.75-1.91V7.5h-.75v.75a.75.75 0 1 1-1.5 0v-1.5A.75.75 0 0 1 3 6h1.5V4.247a.75.75 0 0 1 .64-.742c4.55-.673 9.17-.673 13.72 0zm-.861 9.994h-12L6 16.749C6 17.447 6.534 18 7.178 18h9.644c.644 0 1.178-.554 1.178-1.25l-.001-3.251zM8.25 14.906a.844.844 0 1 1 0 1.688.844.844 0 0 1 0-1.688zm7.5 0a.844.844 0 1 1 0 1.688.844.844 0 0 1 0-1.688zM6 4.9V6.75l-.001.014v5.235h12l.001-7.1a45.31 45.31 0 0 0-12 0zm8.25 1.1a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 1 1 0-1.5h4.5z"/>
   </svg>
 `;
 
 function iconSvgFor(train) {
-  return (train.mode === "BUS") ? BUS_ICON_SVG : TRAIN_ICON_SVG;
+  return (train && train.mode === "BUS") ? BUS_ICON_SVG : TRAIN_ICON_SVG;
 }
 
 // Shared, global state so pip.js (loaded separately, and running inside the
