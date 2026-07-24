@@ -181,7 +181,10 @@ def normalize_service_to_train(service, train_id):
     platform = str(platform)
 
     schedule_metadata = service.get("scheduleMetadata", {}) or {}
-    mode = schedule_metadata.get("modeType")
+    mode = (schedule_metadata.get("modeType") or "TRAIN").upper()
+    operator = schedule_metadata.get("operator", {}) or {}
+    operator_code = operator.get("code")
+    operator_name = operator.get("name")
 
     return {
         "id": train_id,
@@ -191,6 +194,8 @@ def normalize_service_to_train(service, train_id):
         "status": status,
         "expected": expected,
         "mode": mode,
+        "operatorCode": operator_code,
+        "operatorName": operator_name,
         "_scheduled_dt": scheduled_dt,
         "_delay_minutes": delay_minutes,
     }

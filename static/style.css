@@ -420,6 +420,32 @@ body {
   content: "Platform ";
 }
 
+.operator-logo {
+  height: 28px;
+  width: auto;
+  max-width: 64px;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 4px;
+}
+
+.operator-badge {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--border);
+  color: var(--navy-soft);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .card-status {
   flex-shrink: 0;
   display: flex;
@@ -537,6 +563,17 @@ body {
 }
 
 .pip-body .card-plat {
+  font-size: 10px;
+}
+
+.pip-body .operator-logo {
+  height: 18px;
+  max-width: 44px;
+}
+
+.pip-body .operator-badge {
+  height: 18px;
+  padding: 0 6px;
   font-size: 10px;
 }
 

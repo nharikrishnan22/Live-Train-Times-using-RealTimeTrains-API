@@ -23,6 +23,32 @@ function iconSvgFor(train) {
   return (train && train.mode === "BUS") ? BUS_ICON_SVG : TRAIN_ICON_SVG;
 }
 
+// Renders an operator logo into the given container, falling back to a
+// text badge (e.g. "SW") if no logo file exists at /static/operators/<code>.svg
+// for that operator. Built via DOM APIs rather than innerHTML strings since
+// operatorName comes from the live feed and shouldn't be trusted as markup.
+function renderOperatorBadge(container, train) {
+  container.innerHTML = "";
+  if (!train || !train.operatorCode) return;
+
+  const code = train.operatorCode;
+  const label = train.operatorName || code;
+
+  const img = document.createElement("img");
+  img.className = "operator-logo";
+  img.src = `/static/operators/${encodeURIComponent(code)}.svg`;
+  img.alt = label;
+  img.title = label;
+  img.onerror = () => {
+    const badge = document.createElement("span");
+    badge.className = "operator-badge";
+    badge.textContent = code;
+    badge.title = label;
+    container.replaceChildren(badge);
+  };
+  container.appendChild(img);
+}
+
 // Shared, global state so pip.js (loaded separately, and running inside the
 // floating PiP window) can read the latest trains without a second socket.
 window.TrainTracker = {
@@ -78,6 +104,7 @@ function renderTrains(trains, container, isPip = false) {
           <div class="card-plat"></div>
         </div>
         <div class="card-status">
+          <span class="card-operator"></span>
           <span class="status-pill"></span>
         </div>
       `;
@@ -90,6 +117,7 @@ function renderTrains(trains, container, isPip = false) {
     card.querySelector(".card-time").textContent = t.time;
     card.querySelector(".card-dest").textContent = t.destination;
     card.querySelector(".card-plat").textContent = t.platform;
+    renderOperatorBadge(card.querySelector(".card-operator"), t);
 
     const pill = card.querySelector(".status-pill");
     pill.textContent = t.expected;
