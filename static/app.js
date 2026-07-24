@@ -53,6 +53,7 @@ function renderOperatorBadge(container, train) {
 // floating PiP window) can read the latest trains without a second socket.
 window.TrainTracker = {
   trains: [],
+  lastError: null,
   listeners: [],
   onUpdate(fn) {
     this.listeners.push(fn);
@@ -80,13 +81,13 @@ function statusClass(status) {
 }
 
 // Renders the departure cards into any container element (main page or PiP window)
-function renderTrains(trains, container, isPip = false) {
+function renderTrains(trains, container, isPip = false, errorMessage = null) {
   container.innerHTML = "";
 
   if (!trains || trains.length === 0) {
     const empty = document.createElement("p");
     empty.className = isPip ? "pip-empty" : "loading";
-    empty.textContent = "No upcoming departures.";
+    empty.textContent = errorMessage || "No upcoming departures.";
     container.appendChild(empty);
     return;
   }
@@ -138,7 +139,18 @@ function renderTrains(trains, container, isPip = false) {
 }
 
 function renderBoard() {
-  renderTrains(window.TrainTracker.trains, boardRows, false);
+  renderTrains(window.TrainTracker.trains, boardRows, false, window.TrainTracker.lastError);
+}
+
+function updateFeedErrorBanner(message) {
+  const el = document.getElementById("feed-error");
+  if (!el) return;
+  if (message) {
+    el.textContent = message;
+    el.classList.remove("hidden");
+  } else {
+    el.classList.add("hidden");
+  }
 }
 
 // --- Socket.IO live connection ---
@@ -149,6 +161,8 @@ socket.on("connect", () => {
 });
 
 socket.on("train_update", (data) => {
+  window.TrainTracker.lastError = data.error || null;
+  updateFeedErrorBanner(window.TrainTracker.lastError);
   window.TrainTracker.setTrains(data.trains);
 });
 

@@ -34,7 +34,7 @@ function buildPipDocument(pipWin) {
 }
 
 function renderPip(container) {
-  window.renderTrainsInto(window.TrainTracker.trains, container, true);
+  window.renderTrainsInto(window.TrainTracker.trains, container, true, window.TrainTracker.lastError);
 }
 
 async function openPip() {

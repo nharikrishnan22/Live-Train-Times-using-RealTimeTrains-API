@@ -56,6 +56,13 @@ RTT_STOPS_URL = os.getenv("RTT_STOPS_URL", f"{RTT_BASE_URL}/data/stops")
 state_lock = threading.RLock()
 trains = []
 
+# Tracks the most recent refresh failure message (or None if the last
+# refresh succeeded). Lets new connections know the board may be showing
+# stale data, without ever having to clear `trains` just because a fetch
+# failed.
+refresh_error_lock = threading.RLock()
+last_refresh_error = None
+
 # Cached access token for the location endpoint. Populated lazily by
 # get_access_token() and refreshed whenever the location endpoint reports
 # it's invalid/expired.
@@ -308,6 +315,14 @@ def fetch_rtt_services():
         token = get_access_token(force_refresh=True)
         payload = _rtt_request(url, token)
 
+    # If RTT is still reporting an error after the retry (expired token even
+    # after a refresh, or some other API error), don't silently fall through
+    # to an empty services list - that reads to refresh_and_broadcast() as
+    # "zero departures" and wipes a board that may already have good data on
+    # it. Raise instead so the caller can keep the existing board as-is.
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError(f"RTT location error: {payload['error']}")
+
     return payload.get("services", [])
 
 
@@ -373,20 +388,37 @@ def fetch_and_normalize_trains():
 
 
 def refresh_and_broadcast():
-    """Fetch the latest trains for the current route and push them to every client."""
+    """Fetch the latest trains for the current route and push them to every client.
+
+    On failure, the existing `trains` cache is left untouched - a transient
+    RTT/token error should not wipe a board that already has good data on
+    it. tick() already retries this every 30s, so that doubles as a silent
+    retry. Clients are told about the error via the "error" field so they
+    can show a subtle notice, but they keep rendering whatever `trains`
+    already contains. Only when there's no cached data at all (e.g. a fresh
+    page load during an outage) does the error actually read as "no data".
+    """
+    global last_refresh_error
     try:
         normalized = fetch_and_normalize_trains()
         with state_lock:
             trains[:] = normalized
             payload = public_payload(trains)
-        socketio.emit("train_update", {"trains": payload})
+        with refresh_error_lock:
+            last_refresh_error = None
+        socketio.emit("train_update", {"trains": payload, "error": None})
     except Exception as exc:
         print(f"[route] RTT refresh error: {exc}", flush=True)
-        socketio.emit("train_update", {"trains": []})
+        message = "Live departures temporarily unavailable - retrying..."
+        with refresh_error_lock:
+            last_refresh_error = message
+        with state_lock:
+            payload = public_payload(trains)
+        socketio.emit("train_update", {"trains": payload, "error": message})
 
 
 def seed_trains():
-    global trains
+    global trains, last_refresh_error
     with state_lock:
         if not RTT_TOKEN:
             print("[4/5] RTT_TOKEN is not set. Waiting for live data...", flush=True)
@@ -398,6 +430,8 @@ def seed_trains():
         except Exception as exc:
             print(f"[4/5] RTT API unavailable: {exc}", flush=True)
             trains = []
+            with refresh_error_lock:
+                last_refresh_error = "Live departures temporarily unavailable - retrying..."
 
 
 def tick():
@@ -405,7 +439,7 @@ def tick():
     while True:
         if not RTT_TOKEN:
             print("[tick] RTT_TOKEN is not set. Waiting for live data...", flush=True)
-            socketio.emit("train_update", {"trains": []})
+            socketio.emit("train_update", {"trains": [], "error": "RTT_TOKEN is not configured."})
         else:
             refresh_and_broadcast()
 
@@ -426,7 +460,9 @@ def api_stops():
 def on_connect():
     with state_lock:
         payload = public_payload(trains)
-    socketio.emit("train_update", {"trains": payload})
+    with refresh_error_lock:
+        error = last_refresh_error
+    socketio.emit("train_update", {"trains": payload, "error": error})
     socketio.emit("route_updated", get_current_route())
 
 

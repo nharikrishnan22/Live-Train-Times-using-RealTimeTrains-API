@@ -347,6 +347,18 @@ body {
   color: var(--red);
 }
 
+.feed-error {
+  max-width: 560px;
+  margin: 12px auto 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c4406a;
+  background: var(--pink-bg);
+  border-radius: 10px;
+  text-align: center;
+}
+
 .board-rows {
   display: flex;
   flex-direction: column;
