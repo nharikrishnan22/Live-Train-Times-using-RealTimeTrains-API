@@ -47,7 +47,7 @@ RTT_TOKEN = os.getenv("RTT_TOKEN")
 RTT_ACCESS_TOKEN_URL = os.getenv(
     "RTT_ACCESS_TOKEN_URL", f"{RTT_BASE_URL}/api/get_access_token"
 )
-RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "180"))
+RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "360"))
 RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "PAD")
 RTT_TIME_FROM = os.getenv("RTT_TIME_FROM")
 RTT_DETAILED = os.getenv("RTT_DETAILED", "true").lower() == "true"
