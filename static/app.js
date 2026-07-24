@@ -447,6 +447,23 @@ function setupAutocomplete(inputId, codeInputId, listId) {
   const codeInput = document.getElementById(codeInputId);
   const list = document.getElementById(listId);
 
+  // Scores how well a stop matches the typed query, lower is better. Plain
+  // substring matching (the old behaviour) left results in whatever order
+  // allStops happened to be in - alphabetical by description - so typing
+  // "ear" showed "Bearley" above "Earley" even though "EAR" is Earley's
+  // exact short code. Ranking by match quality first fixes that.
+  function matchScore(stop, q) {
+    const name = stop.description.toLowerCase();
+    const code = stop.shortCode.toLowerCase();
+
+    if (code === q) return 0; // exact short code, e.g. "ear" -> EAR
+    if (name.startsWith(q)) return 1; // name starts with query
+    if (code.startsWith(q)) return 2; // code starts with query
+    if (name.includes(` ${q}`)) return 3; // query starts a later word
+    if (name.includes(q) || code.includes(q)) return 4; // buried anywhere else
+    return -1; // no match
+  }
+
   function renderSuggestions(query) {
     list.innerHTML = "";
     const q = query.trim().toLowerCase();
@@ -456,8 +473,11 @@ function setupAutocomplete(inputId, codeInputId, listId) {
     }
 
     const matches = allStops
-      .filter((s) => s.description.toLowerCase().includes(q) || s.shortCode.toLowerCase().includes(q))
-      .slice(0, 8);
+      .map((s) => ({ stop: s, score: matchScore(s, q) }))
+      .filter((m) => m.score !== -1)
+      .sort((a, b) => a.score - b.score || a.stop.description.localeCompare(b.stop.description))
+      .slice(0, 8)
+      .map((m) => m.stop);
 
     if (matches.length === 0) {
       list.classList.remove("open");
