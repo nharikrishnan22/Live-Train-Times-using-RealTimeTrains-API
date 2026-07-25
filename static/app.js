@@ -327,15 +327,15 @@ function sendDesktopNotification(train, prevDelay = 0) {
   }
 
   try {
-    new Notification(title, { body, tag: `train-${trainKey(train)}` });
+    new Notification(title, { body, tag: `train-${trainKey(train)}`, renotify: true });
   } catch (err) {
     console.error("Failed to show desktop notification:", err);
   }
 }
 
 // Notifies when a watched train's platform becomes known, gets confirmed
-// (moves from an estimated "planned" platform to a confirmed "actual" one),
-// or changes to a different number altogether.
+// (moves from an estimated "planned" platform to a confirmed "actual" one -
+// even if the number stays the same), or changes to a different number.
 function sendPlatformNotification(train, prev, isConfirmationOnly) {
   if (!notificationsSupported() || Notification.permission !== "granted") return;
 
@@ -357,7 +357,11 @@ function sendPlatformNotification(train, prev, isConfirmationOnly) {
   }
 
   try {
-    new Notification(title, { body, tag: `train-platform-${trainKey(train)}` });
+    // renotify: true is essential here - without it, a notification sharing
+    // the same tag as a still-visible earlier one (e.g. "newly known" then
+    // "confirmed" for the same train) gets silently swapped in by the
+    // browser with no new alert, so the confirmation appears to never fire.
+    new Notification(title, { body, tag: `train-platform-${trainKey(train)}`, renotify: true });
   } catch (err) {
     console.error("Failed to show platform notification:", err);
   }
@@ -402,9 +406,7 @@ function checkWatchedTrains(trainList) {
     const platformConfirmed =
       !!prev && prevHasPlatform && !!prev.platformEstimated && !t.platformEstimated && hasPlatform;
     const shouldNotifyPlatform =
-      NotifySettings.watchedIds.has(
-        
-      ) &&
+      NotifySettings.watchedIds.has(idKey) &&
       hasPlatform &&
       (platformValueChanged || platformNewlyKnown || platformConfirmed);
 
