@@ -117,7 +117,9 @@ function renderTrains(trains, container, isPip = false, errorMessage = null) {
     card.dataset.id = trainKey(t);
     card.querySelector(".card-time").textContent = t.time;
     card.querySelector(".card-dest").textContent = t.destination;
-    card.querySelector(".card-plat").textContent = t.platform;
+    card.querySelector(".card-plat").textContent = t.platformEstimated
+      ? `Est. ${t.platform}`
+      : t.platform;
     renderOperatorBadge(card.querySelector(".card-operator"), t);
 
     const pill = card.querySelector(".status-pill");

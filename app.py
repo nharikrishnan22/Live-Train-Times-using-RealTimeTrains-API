@@ -179,12 +179,20 @@ def normalize_service_to_train(service, train_id):
 
     location_metadata = service.get("locationMetadata", {}) or {}
     platform_metadata = location_metadata.get("platform", {}) or {}
-    platform = (
-        platform_metadata.get("actual")
-        or platform_metadata.get("forecast")
-        or platform_metadata.get("planned")
-        or "—"
-    )
+    platform_actual = platform_metadata.get("actual")
+    platform_planned = platform_metadata.get("planned")
+
+    # Only "actual" is a confirmed platform. If it's missing, fall back to
+    # "planned" but flag it as an estimate (ignore "forecast" entirely -
+    # it's not reliable enough to present as a platform number).
+    platform_estimated = False
+    if platform_actual:
+        platform = platform_actual
+    elif platform_planned:
+        platform = platform_planned
+        platform_estimated = True
+    else:
+        platform = "—"
     platform = str(platform)
 
     schedule_metadata = service.get("scheduleMetadata", {}) or {}
@@ -197,6 +205,7 @@ def normalize_service_to_train(service, train_id):
         "id": train_id,
         "destination": destination,
         "platform": platform,
+        "platformEstimated": platform_estimated,
         "time": scheduled_dt.strftime("%H:%M"),
         "status": status,
         "expected": expected,
