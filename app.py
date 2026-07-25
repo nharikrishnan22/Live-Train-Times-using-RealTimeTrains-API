@@ -269,6 +269,10 @@ def build_rtt_params(now=None):
     return params
 
 
+class RttTokenExpiredError(RuntimeError):
+    """Raised when RTT responds with HTTP 401, meaning the bearer token is invalid/expired."""
+
+
 def _rtt_request(url, bearer_token, method="GET"):
     """Issue a bearer-authenticated request against the RTT API and return the parsed JSON body."""
     request = urllib.request.Request(
@@ -285,6 +289,17 @@ def _rtt_request(url, bearer_token, method="GET"):
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         error_text = exc.read().decode("utf-8", "ignore")
+        # RTT signals an expired/invalid token two different ways: some
+        # endpoints return HTTP 200 with {"error": "Invalid or expired
+        # token"} in the body (handled by callers below), others return a
+        # genuine HTTP 401. That second case used to surface here as a plain
+        # RuntimeError, which callers had no way to distinguish from any
+        # other RTT API failure - so the token never got refreshed and every
+        # subsequent request kept failing with 401 until the process
+        # restarted. Raise a distinct type so callers can catch it and retry
+        # with a freshly fetched token.
+        if exc.code == 401:
+            raise RttTokenExpiredError(f"RTT API error {exc.code}: {error_text}") from exc
         raise RuntimeError(f"RTT API error {exc.code}: {error_text}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Unable to reach RTT API: {exc.reason}") from exc
@@ -318,7 +333,11 @@ def fetch_rtt_services():
     url = f"{RTT_BASE_URL}/{RTT_NAMESPACE}/location?{urlencode(params)}"
 
     token = get_access_token()
-    payload = _rtt_request(url, token)
+    try:
+        payload = _rtt_request(url, token)
+    except RttTokenExpiredError:
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(url, token)
 
     if isinstance(payload, dict) and payload.get("error") == "Invalid or expired token":
         token = get_access_token(force_refresh=True)
@@ -338,7 +357,11 @@ def fetch_rtt_services():
 def fetch_stops_from_api():
     """Fetch the full station list from /data/stops, refreshing the access token once if it's stale."""
     token = get_access_token()
-    payload = _rtt_request(RTT_STOPS_URL, token)
+    try:
+        payload = _rtt_request(RTT_STOPS_URL, token)
+    except RttTokenExpiredError:
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(RTT_STOPS_URL, token)
 
     if isinstance(payload, dict) and payload.get("error") == "Invalid or expired token":
         token = get_access_token(force_refresh=True)
