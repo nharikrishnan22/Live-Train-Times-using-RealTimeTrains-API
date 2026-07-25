@@ -183,9 +183,10 @@ const NotifySettings = {
   watchedIds: new Set(),
 };
 
-// Remembers the last status/expected text we notified about per train id,
-// so a train sitting at "Delayed" doesn't re-notify every 30s tick - only
-// when something about it actually changes (goes cancelled, delay grows, etc).
+// Remembers the last status/expected/platform we notified about per train
+// id, so a train sitting at "Delayed" (or on the same platform) doesn't
+// re-notify every 30s tick - only when something actually changes (goes
+// cancelled, delay grows, platform gets confirmed or changes, etc).
 const notifyMemory = new Map();
 
 function loadNotifyPrefs() {
@@ -332,6 +333,36 @@ function sendDesktopNotification(train, prevDelay = 0) {
   }
 }
 
+// Notifies when a watched train's platform becomes known, gets confirmed
+// (moves from an estimated "planned" platform to a confirmed "actual" one),
+// or changes to a different number altogether.
+function sendPlatformNotification(train, prev, isConfirmationOnly) {
+  if (!notificationsSupported() || Notification.permission !== "granted") return;
+
+  const hadPlatform = prev && prev.platform && prev.platform !== "—";
+  let title;
+  let body;
+
+  if (!hadPlatform) {
+    title = `Platform ${train.platform} — ${train.time} to ${train.destination}`;
+    body = train.platformEstimated
+      ? `Estimated platform: ${train.platform}`
+      : `Platform confirmed: ${train.platform}`;
+  } else if (isConfirmationOnly) {
+    title = `Platform Confirmed — ${train.time} to ${train.destination}`;
+    body = `Platform ${train.platform} is now confirmed.`;
+  } else {
+    title = `Platform Changed — ${train.time} to ${train.destination}`;
+    body = `Now ${train.platformEstimated ? "estimated" : "confirmed"} platform ${train.platform} (was ${prev.platform}).`;
+  }
+
+  try {
+    new Notification(title, { body, tag: `train-platform-${trainKey(train)}` });
+  } catch (err) {
+    console.error("Failed to show platform notification:", err);
+  }
+}
+
 function checkWatchedTrains(trainList) {
   (trainList || []).forEach((t) => {
     const idKey = trainKey(t);
@@ -355,25 +386,43 @@ function checkWatchedTrains(trainList) {
     }
 
     const statusChanged = !prev || prev.status !== t.status;
-    const shouldNotify =
+    const shouldNotifyStatus =
       NotifySettings.watchedIds.has(idKey) &&
       (statusChanged || significantTimeChange) &&
       (isBad || (!isBad && wasBad)); // Notify on bad state or recovery
 
-    if (shouldNotify) {
+    // Platform: notify once a platform becomes known, once an estimated
+    // ("planned") platform gets confirmed ("actual") - even if the number
+    // doesn't change - and any time the platform number itself changes.
+    const hasPlatform = !!t.platform && t.platform !== "—";
+    const prevHasPlatform = !!prev && !!prev.platform && prev.platform !== "—";
+    const platformValueChanged =
+      !!prev && prevHasPlatform && hasPlatform && prev.platform !== t.platform;
+    const platformNewlyKnown = !!prev && !prevHasPlatform && hasPlatform;
+    const platformConfirmed =
+      !!prev && prevHasPlatform && !!prev.platformEstimated && !t.platformEstimated && hasPlatform;
+    const shouldNotifyPlatform =
+      NotifySettings.watchedIds.has(
+        
+      ) &&
+      hasPlatform &&
+      (platformValueChanged || platformNewlyKnown || platformConfirmed);
+
+    if (shouldNotifyStatus) {
       sendDesktopNotification(t, prevDelay);
-      // Update memory only when we actually notify
+    }
+    if (shouldNotifyPlatform) {
+      sendPlatformNotification(t, prev, platformConfirmed && !platformValueChanged);
+    }
+
+    if (shouldNotifyStatus || shouldNotifyPlatform || !prev) {
+      // Update memory when we notify, or to seed initial state
       notifyMemory.set(idKey, {
         status: t.status,
         expected: t.expected,
         delayMinutes: currentDelay,
-      });
-    } else if (!prev) {
-      // Seed initial state if not present
-      notifyMemory.set(idKey, {
-        status: t.status,
-        expected: t.expected,
-        delayMinutes: currentDelay,
+        platform: t.platform,
+        platformEstimated: t.platformEstimated,
       });
     }
   });
@@ -395,7 +444,9 @@ async function toggleWatch(id) {
       notifyMemory.set(idKey, { 
         status: current.status, 
         expected: current.expected,
-        delayMinutes: inferDelayMinutes(current) || 0
+        delayMinutes: inferDelayMinutes(current) || 0,
+        platform: current.platform,
+        platformEstimated: current.platformEstimated,
       });
     } else {
       notifyMemory.delete(idKey);
