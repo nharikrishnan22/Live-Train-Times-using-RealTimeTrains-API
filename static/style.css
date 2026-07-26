@@ -662,6 +662,11 @@ body {
   position: relative;
 }
 
+/* Connecting line for the calling-points list. Green while the train is (or
+   was, at the user's boarding station) on time, red if delayed or
+   cancelled, filled down to exactly where the train currently is (see
+   applyProgressLineColor in app.js); falls back to a plain grey while no
+   status has been computed yet. */
 .calling-points::before {
   content: "";
   position: absolute;
@@ -669,7 +674,7 @@ body {
   bottom: 6px;
   left: 4px;
   width: 2px;
-  background: var(--border);
+  background: var(--progress-gradient, var(--border));
 }
 
 .calling-point {
@@ -754,10 +759,6 @@ body {
   color: var(--text-dim);
 }
 
-.calling-point.expandable {
-  padding-left: 20px;
-}
-
 .calling-point-group-toggle {
   border: none;
   background: none;
@@ -766,15 +767,11 @@ body {
   font-weight: 700;
   color: var(--mint);
   cursor: pointer;
+  text-align: left;
 }
 
 .calling-point-group-toggle:hover {
   text-decoration: underline;
-}
-
-.calling-points.expanded-group {
-  margin-top: 4px;
-  padding-left: 6px;
 }
 
 .calling-points-loading,

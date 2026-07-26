@@ -54,6 +54,10 @@ function renderOperatorBadge(container, train) {
 window.TrainTracker = {
   trains: [],
   lastError: null,
+  // The currently-confirmed route, keyed by station description since that's
+  // what calling points are labelled with. Used to trim the calling-points
+  // panel down to the user's actual journey (see renderCallingPointsList).
+  currentRoute: { fromDescription: null, toDescription: null },
   listeners: [],
   onUpdate(fn) {
     this.listeners.push(fn);
@@ -194,10 +198,146 @@ function buildCallingPointLi(point) {
   return li;
 }
 
-// Groups the flat calling-point list the way real UK departure boards do:
-// origin, destination, and the current/tracked station are always visible,
-// and any run of already-departed intermediate stops in between collapses
-// behind a "+N stops" toggle so a long route stays scannable.
+// Appends a collapsed "+N stops" toggle row. `forceCollapse` is used for the
+// leading/trailing trim groups (stops before the user's boarding station or
+// after their alighting station) so they stay hidden even when there's only
+// a single stop in them - unlike the internal "already departed" groups,
+// which show a lone stop plainly rather than making the user tap to reveal
+// just one row. Returns the DOM node that was appended (used to measure the
+// progress line - see applyProgressLineColor).
+//
+// Expanding a group inserts its stops as direct siblings right after the
+// toggle, in the *same* top-level list, rather than in a nested sub-list -
+// so they land on the same connecting line as every other stop instead of
+// floating off to the right in their own indented rail.
+function appendCollapsedGroup(listEl, groupPoints, { forceCollapse = false, suffix = "", onToggle } = {}) {
+  if (!groupPoints.length) return null;
+
+  if (!forceCollapse && groupPoints.length === 1) {
+    const li = buildCallingPointLi(groupPoints[0]);
+    listEl.appendChild(li);
+    return li;
+  }
+
+  const groupLi = callingPointGroupTemplate.content.firstElementChild.cloneNode(true);
+  const toggle = groupLi.querySelector(".calling-point-group-toggle");
+  const count = groupPoints.length;
+  const stopWord = count === 1 ? "stop" : "stops";
+  const closedText = `⋯ ${count} ${stopWord}${suffix}`;
+  toggle.textContent = closedText;
+  listEl.appendChild(groupLi);
+
+  let expandedRows = [];
+  toggle.addEventListener("click", () => {
+    const willOpen = expandedRows.length === 0;
+    if (willOpen) {
+      let anchor = groupLi;
+      groupPoints.forEach((gp) => {
+        const li = buildCallingPointLi(gp);
+        anchor.after(li);
+        anchor = li;
+        expandedRows.push(li);
+      });
+      toggle.textContent = `▲ Hide ${count} ${stopWord}${suffix}`;
+    } else {
+      expandedRows.forEach((li) => li.remove());
+      expandedRows = [];
+      toggle.textContent = closedText;
+    }
+    if (onToggle) onToggle();
+  });
+
+  return groupLi;
+}
+
+// Splits the flat calling-point list into the row-by-row segments that get
+// rendered: a leading group for anything before the user's boarding station,
+// a trailing group for anything after their alighting station, and - within
+// that visible window - the classic "already departed intermediate stops
+// collapse behind +N stops" grouping.
+function buildCallingPointSegments(points, startIdx, endIdx) {
+  const lastIndex = points.length - 1;
+  const segments = [];
+
+  if (startIdx > 0) {
+    segments.push({ kind: "edge", points: points.slice(0, startIdx) });
+  }
+
+  let i = startIdx;
+  while (i <= endIdx) {
+    const point = points[i];
+    const isEdge = i === startIdx || i === endIdx;
+    const collapsible = !isEdge && !point.isCurrent && point.status === "departed";
+
+    if (!collapsible) {
+      segments.push({ kind: "single", points: [point] });
+      i += 1;
+      continue;
+    }
+
+    const groupStart = i;
+    while (
+      i <= endIdx &&
+      i !== endIdx &&
+      !points[i].isCurrent &&
+      points[i].status === "departed"
+    ) {
+      i += 1;
+    }
+    segments.push({ kind: "internal", points: points.slice(groupStart, i) });
+  }
+
+  if (endIdx < lastIndex) {
+    segments.push({ kind: "edge", points: points.slice(endIdx + 1) });
+  }
+
+  return segments;
+}
+
+// Works out whether the train was/is on time as of the user's boarding
+// station, using the same schedule-vs-expected clock time comparison used
+// for the top-level delay notifications.
+function callingPointOnTimeColor(point) {
+  if (!point) return "var(--border)";
+  if (point.status === "cancelled") return "var(--red)";
+  const scheduled = timeToMinutes(point.time);
+  const expected = timeToMinutes(extractClockTime(point.expected));
+  if (scheduled == null || expected == null) return "var(--mint)";
+  let diff = expected - scheduled;
+  if (diff < 0) diff += 24 * 60;
+  return diff > 0 ? "var(--red)" : "var(--mint)";
+}
+
+// Colours the connecting line green (on time) or red (delayed/cancelled) as
+// of the user's origin station, filling it down to exactly where the train
+// currently is. Rather than approximating that position from a fraction of
+// the segment count (which drifts once rows of different kinds - single
+// stops vs. collapsed groups - are mixed together), this measures the real
+// on-screen offset of the row that represents the train's current spot, so
+// the fill lines up with the actual dot rather than an estimate.
+function applyProgressLineColor(listEl, originPoint, targetNode) {
+  const color = callingPointOnTimeColor(originPoint);
+
+  let pct = 0;
+  if (targetNode && listEl.offsetHeight > 0) {
+    // 11px matches the ::before dot's own `top: 11px` offset within a row,
+    // so this lines up with the dot's centre rather than the row's edge.
+    const dotCenter = targetNode.offsetTop + 11;
+    pct = Math.round(Math.min(Math.max((dotCenter / listEl.offsetHeight) * 100, 0), 100));
+  }
+
+  listEl.style.setProperty(
+    "--progress-gradient",
+    `linear-gradient(to bottom, ${color} 0%, ${color} ${pct}%, var(--border) ${pct}%, var(--border) 100%)`
+  );
+}
+
+// Renders the calling-point list trimmed to the user's actual journey: the
+// full list of stops still comes back from the API, but anything before the
+// station the user searched for (unless that IS the train's true origin) and
+// anything after the station they searched as their destination gets hidden
+// behind a collapsed group, the same way already-departed intermediate stops
+// are collapsed.
 function renderCallingPointsList(listEl, points) {
   listEl.innerHTML = "";
   if (!points || points.length === 0) {
@@ -209,48 +349,54 @@ function renderCallingPointsList(listEl, points) {
   }
 
   const lastIndex = points.length - 1;
-  let i = 0;
-  while (i <= lastIndex) {
-    const point = points[i];
-    const isEdge = i === 0 || i === lastIndex;
-    const collapsible = !isEdge && !point.isCurrent && point.status === "departed";
+  const route = window.TrainTracker.currentRoute || {};
+  const norm = (s) => (s || "").trim().toLowerCase();
 
-    if (!collapsible) {
-      listEl.appendChild(buildCallingPointLi(point));
-      i += 1;
-      continue;
-    }
-
-    const groupStart = i;
-    while (
-      i <= lastIndex &&
-      i !== lastIndex &&
-      !points[i].isCurrent &&
-      points[i].status === "departed"
-    ) {
-      i += 1;
-    }
-    const groupPoints = points.slice(groupStart, i);
-
-    if (groupPoints.length === 1) {
-      listEl.appendChild(buildCallingPointLi(groupPoints[0]));
-      continue;
-    }
-
-    const groupLi = callingPointGroupTemplate.content.firstElementChild.cloneNode(true);
-    const toggle = groupLi.querySelector(".calling-point-group-toggle");
-    const nestedList = groupLi.querySelector(".calling-points.expanded-group");
-    toggle.textContent = `⋯ ${groupPoints.length} stops`;
-    groupPoints.forEach((gp) => nestedList.appendChild(buildCallingPointLi(gp)));
-    toggle.addEventListener("click", () => {
-      const willOpen = nestedList.classList.contains("hidden");
-      nestedList.classList.toggle("hidden", !willOpen);
-      toggle.textContent = willOpen
-        ? `▲ Hide ${groupPoints.length} stops`
-        : `⋯ ${groupPoints.length} stops`;
-    });
-    listEl.appendChild(groupLi);
+  let startIdx = route.fromDescription
+    ? points.findIndex((p) => norm(p.station) === norm(route.fromDescription))
+    : -1;
+  let endIdx = route.toDescription
+    ? points.findIndex((p) => norm(p.station) === norm(route.toDescription))
+    : -1;
+  if (startIdx === -1) startIdx = 0;
+  if (endIdx === -1) endIdx = lastIndex;
+  if (startIdx > endIdx) {
+    startIdx = 0;
+    endIdx = lastIndex;
   }
+
+  const segments = buildCallingPointSegments(points, startIdx, endIdx);
+
+  // Work out which segment represents the train's current position (or, if
+  // the feed doesn't flag one, the last stop it's known to have departed).
+  let currentSegmentIndex = segments.findIndex((seg) => seg.points.some((p) => p.isCurrent));
+  if (currentSegmentIndex === -1) {
+    for (let s = segments.length - 1; s >= 0; s -= 1) {
+      if (segments[s].points.every((p) => p.status === "departed")) {
+        currentSegmentIndex = s;
+        break;
+      }
+    }
+  }
+
+  const refreshProgressLine = () => applyProgressLineColor(listEl, points[startIdx], targetNode);
+
+  let targetNode = null;
+  segments.forEach((seg, idx) => {
+    let node;
+    if (seg.kind === "single") {
+      node = buildCallingPointLi(seg.points[0]);
+      listEl.appendChild(node);
+    } else {
+      node = appendCollapsedGroup(listEl, seg.points, {
+        forceCollapse: seg.kind === "edge",
+        onToggle: refreshProgressLine,
+      });
+    }
+    if (idx === currentSegmentIndex) targetNode = node;
+  });
+
+  refreshProgressLine();
 }
 
 async function loadCallingPoints(uniqueIdentity) {
@@ -811,6 +957,7 @@ socket.on("route_updated", (route) => {
   const fromDesc = route.from_description || route.from;
   const toDesc = route.to_description || route.to;
   routeSubtitle.textContent = `${fromDesc} → ${toDesc}`;
+  window.TrainTracker.currentRoute = { fromDescription: fromDesc, toDescription: toDesc };
 
   // Keep the form reflecting whatever route is actually live, including on
   // first connect and when another client changes it - but don't stomp on
