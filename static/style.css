@@ -670,11 +670,12 @@ body {
 .calling-points::before {
   content: "";
   position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 4px;
-  width: 2px;
+  top: 11px;
+  bottom: 11px;
+  left: 2px;
+  width: 4px;
   background: var(--progress-gradient, var(--border));
+  z-index: 0;
 }
 
 .calling-point {
@@ -695,6 +696,17 @@ body {
   border-radius: 50%;
   background: var(--card-bg);
   border: 2px solid var(--text-dim);
+  z-index: 1;
+}
+
+.calling-point.delayed::before {
+  border-color: var(--red);
+  background: var(--red-bg);
+}
+
+.calling-point.cancelled::before {
+  border-color: var(--red);
+  background: var(--red);
 }
 
 .calling-point.departed::before {
@@ -712,6 +724,7 @@ body {
   border-radius: 50%;
   background: var(--card-bg);
   border: 2px solid var(--text-dim);
+  z-index: 1;
 }
 
 .calling-point.cancelled .calling-point-due {
@@ -778,4 +791,42 @@ body {
 .calling-points-empty {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* Collapsed group container styled to match individual calling points */
+.calling-point-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 5px 0 5px 20px;
+}
+
+/* Timeline dot for the collapsed group */
+.calling-point-group::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--mint);
+  z-index: 1;
+}
+
+/* Status variants for the collapsed group dot */
+.calling-point-group.on-time::before {
+  border-color: var(--mint);
+  background: var(--mint-bg);
+}
+
+.calling-point-group.delayed::before {
+  border-color: var(--red);
+  background: var(--red-bg);
+}
+
+.calling-point-group.cancelled::before {
+  border-color: var(--red);
+  background: var(--red);
 }

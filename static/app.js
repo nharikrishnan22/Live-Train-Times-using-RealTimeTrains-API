@@ -185,19 +185,6 @@ function callingPointsCacheKey(uniqueIdentity) {
   return uniqueIdentity;
 }
 
-function buildCallingPointLi(point) {
-  const li = callingPointTemplate.content.firstElementChild.cloneNode(true);
-  const classes = ["calling-point", point.status];
-  if (point.isOrigin) classes.push("origin");
-  if (point.isDestination) classes.push("destination");
-  if (point.isCurrent) classes.push("current");
-  li.className = classes.join(" ");
-  li.querySelector(".calling-point-time").textContent = point.time;
-  li.querySelector(".calling-point-station").textContent = point.station;
-  li.querySelector(".calling-point-due").textContent = point.expected;
-  return li;
-}
-
 // Appends a collapsed "+N stops" toggle row. `forceCollapse` is used for the
 // leading/trailing trim groups (stops before the user's boarding station or
 // after their alighting station) so they stay hidden even when there's only
@@ -220,11 +207,25 @@ function appendCollapsedGroup(listEl, groupPoints, { forceCollapse = false, suff
   }
 
   const groupLi = callingPointGroupTemplate.content.firstElementChild.cloneNode(true);
+
+  // Determine if the group contains any delayed or cancelled stops to color the dot
+  const hasCancelled = groupPoints.some((p) => p.status === "cancelled");
+  const hasDelayed = groupPoints.some((p) => p.status === "delayed" || callingPointOnTimeColor(p) === "var(--red)");
+
+  if (hasCancelled) {
+    groupLi.classList.add("cancelled");
+  } else if (hasDelayed) {
+    groupLi.classList.add("delayed");
+  } else {
+    groupLi.classList.add("on-time");
+  }
+
   const toggle = groupLi.querySelector(".calling-point-group-toggle");
   const count = groupPoints.length;
   const stopWord = count === 1 ? "stop" : "stops";
   const closedText = `⋯ ${count} ${stopWord}${suffix}`;
   toggle.textContent = closedText;
+  groupLi._points = groupPoints; 
   listEl.appendChild(groupLi);
 
   let expandedRows = [];
@@ -238,12 +239,15 @@ function appendCollapsedGroup(listEl, groupPoints, { forceCollapse = false, suff
         anchor = li;
         expandedRows.push(li);
       });
+      groupLi.classList.add("is-open");
       toggle.textContent = `▲ Hide ${count} ${stopWord}${suffix}`;
     } else {
       expandedRows.forEach((li) => li.remove());
       expandedRows = [];
+      groupLi.classList.remove("is-open");
       toggle.textContent = closedText;
     }
+    // Recalculate progress line dynamically when expanding/collapsing
     if (onToggle) onToggle();
   });
 
@@ -308,27 +312,136 @@ function callingPointOnTimeColor(point) {
   return diff > 0 ? "var(--red)" : "var(--mint)";
 }
 
-// Colours the connecting line green (on time) or red (delayed/cancelled) as
-// of the user's origin station, filling it down to exactly where the train
-// currently is. Rather than approximating that position from a fraction of
-// the segment count (which drifts once rows of different kinds - single
-// stops vs. collapsed groups - are mixed together), this measures the real
-// on-screen offset of the row that represents the train's current spot, so
-// the fill lines up with the actual dot rather than an estimate.
+function buildCallingPointLi(point) {
+  const li = callingPointTemplate.content.firstElementChild.cloneNode(true);
+  const classes = ["calling-point", point.status];
+  if (point.isOrigin) classes.push("origin");
+  if (point.isDestination) classes.push("destination");
+  if (point.isCurrent) classes.push("current");
+  li.className = classes.join(" ");
+  li.querySelector(".calling-point-time").textContent = point.time;
+  li.querySelector(".calling-point-station").textContent = point.station;
+  li.querySelector(".calling-point-due").textContent = point.expected;
+  li._points = [point]; // Store point data directly on the DOM node
+  return li;
+}
+
+function getPointMinutes(point) {
+  if (!point) return null;
+  const str = extractClockTime(point.expected) || extractClockTime(point.time) || point.time;
+  return timeToMinutes(str);
+}
+
+// Calculates the exact pixel offset for the progress line by interpolating 
+// proportionally between station stop times based on the current system clock.
+function calculateProgressDotY(listEl) {
+  const children = Array.from(listEl.children);
+  if (children.length === 0) return 0;
+
+  const visibleItems = [];
+
+  children.forEach(child => {
+    if (child.classList.contains("calling-point-group")) {
+      if (!child.classList.contains("is-open")) {
+        // Closed group: represents a block of points at this element's offset
+        const points = child._points || [];
+        if (points.length > 0) {
+          const firstPt = points[0];
+          const lastPt = points[points.length - 1];
+          visibleItems.push({
+            dotY: child.offsetTop + 11,
+            startTime: getPointMinutes(firstPt),
+            endTime: getPointMinutes(lastPt)
+          });
+        }
+      }
+      // If the group is open, skip the group header because its individual 
+      // points are rendered as separate .calling-point elements below it.
+    } else if (child.classList.contains("calling-point")) {
+      const points = child._points || [];
+      if (points.length > 0) {
+        const pt = points[0];
+        visibleItems.push({
+          dotY: child.offsetTop + 11,
+          startTime: getPointMinutes(pt),
+          endTime: getPointMinutes(pt)
+        });
+      }
+    }
+  });
+
+  if (visibleItems.length === 0) return 0;
+
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+  const validItems = visibleItems.filter(item => item.startTime !== null);
+  if (validItems.length === 0) {
+    return visibleItems[visibleItems.length - 1].dotY;
+  }
+
+  // If current time is before the first visible stop
+  if (currentMinutes <= validItems[0].startTime) {
+    const first = validItems[0];
+    const second = validItems.find(item => item.startTime > first.startTime);
+    if (second) {
+      const timeSpan = second.startTime - first.startTime;
+      const ySpan = second.dotY - first.dotY;
+      if (timeSpan > 0) {
+        const ratio = (currentMinutes - first.startTime) / timeSpan;
+        return Math.max(0, first.dotY + ratio * ySpan);
+      }
+    }
+    return Math.max(0, first.dotY - 20);
+  }
+
+  // If current time is past or at the last visible stop
+  const lastValid = validItems[validItems.length - 1];
+  if (currentMinutes >= lastValid.startTime) {
+    return lastValid.dotY;
+  }
+
+  // Interpolate smoothly between the two surrounding station stops
+  for (let i = 0; i < validItems.length - 1; i++) {
+    const cur = validItems[i];
+    const next = validItems[i + 1];
+    if (currentMinutes >= cur.startTime && currentMinutes <= next.startTime) {
+      const timeSpan = next.startTime - cur.startTime;
+      const ySpan = next.dotY - cur.dotY;
+      if (timeSpan <= 0) return cur.dotY;
+      const ratio = (currentMinutes - cur.startTime) / timeSpan;
+      return cur.dotY + ratio * ySpan;
+    }
+  }
+
+  return lastValid.dotY;
+}
+
+// Colours the connecting line and sets its length based on proportional time interpolation past passed stations
 function applyProgressLineColor(listEl, originPoint, targetNode) {
   const color = callingPointOnTimeColor(originPoint);
 
-  let pct = 0;
-  if (targetNode && listEl.offsetHeight > 0) {
-    // 11px matches the ::before dot's own `top: 11px` offset within a row,
-    // so this lines up with the dot's centre rather than the row's edge.
-    const dotCenter = targetNode.offsetTop + 11;
-    pct = Math.round(Math.min(Math.max((dotCenter / listEl.offsetHeight) * 100, 0), 100));
+  if (!listEl || listEl.children.length === 0) {
+    listEl.style.setProperty(
+      "--progress-gradient",
+      `linear-gradient(to bottom,var(--border),var(--border))`
+    );
+    return;
   }
+
+  const dotY = calculateProgressDotY(listEl);
+  const height = listEl.offsetHeight;
+  const pct = height > 0 ? Math.max(0, Math.min(100, (dotY / height) * 100)) : 0;
 
   listEl.style.setProperty(
     "--progress-gradient",
-    `linear-gradient(to bottom, ${color} 0%, ${color} ${pct}%, var(--border) ${pct}%, var(--border) 100%)`
+    `linear-gradient(
+      to bottom,
+      ${color} 0%,
+      ${color} ${pct}%,
+      var(--border) ${pct}%,
+      var(--border) 100%
+    )`
   );
 }
 
