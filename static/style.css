@@ -698,9 +698,15 @@ body {
 }
 
 .calling-point.current::before {
-  border-color: var(--mint);
-  background: var(--mint);
-  box-shadow: 0 0 0 3px var(--mint-bg);
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--text-dim);
 }
 
 .calling-point.cancelled .calling-point-due {

@@ -397,14 +397,17 @@ def normalize_calling_point(location, now, current_short_codes=None):
                 break
 
     forecast_dt = None
-    forecast_value = primary_block.get("realtimeForecast")
-    if forecast_value:
+    if datetime.now() >= scheduled_dt:
+        forecast_value = primary_block.get("realtimeActual")
+        forecast_dt = parse_datetime(forecast_value)
+    else:
+        forecast_value = primary_block.get("realtimeForecast")
         forecast_dt = parse_datetime(forecast_value)
 
     if is_cancelled:
         expected_label = "Cancelled"
     elif forecast_dt and scheduled_dt and forecast_dt > scheduled_dt:
-        expected_label = f"Exp {forecast_dt.strftime('%H:%M')}"
+        expected_label = forecast_dt.strftime('%H:%M')
     else:
         expected_label = "On time"
 
