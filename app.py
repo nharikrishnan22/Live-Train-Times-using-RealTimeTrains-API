@@ -397,7 +397,7 @@ def normalize_calling_point(location, now, current_short_codes=None):
                 break
 
     forecast_dt = None
-    if datetime.now() >= scheduled_dt:
+    if primary_block.get("realtimeActual") and datetime.now() >= scheduled_dt:
         forecast_value = primary_block.get("realtimeActual")
         forecast_dt = parse_datetime(forecast_value)
     else:
