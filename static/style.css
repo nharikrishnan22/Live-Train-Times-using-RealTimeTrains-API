@@ -368,7 +368,7 @@ body {
 /* ---- Journey card, Trainline-style ---- */
 .card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -376,6 +376,17 @@ body {
   padding: 14px 16px;
   box-shadow: 0 1px 2px rgba(22, 0, 120, 0.04);
   transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .card:hover {
@@ -599,4 +610,169 @@ body {
   text-align: center;
   padding: 20px 0;
   font-size: 13px;
+}
+
+.calling-points-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.calling-points-toggle svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.15s ease;
+}
+
+.calling-points-toggle:hover {
+  color: var(--mint);
+  border-color: var(--mint);
+}
+
+.calling-points-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.calling-points-wrap {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.calling-points-status {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.calling-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+.calling-points::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 4px;
+  width: 2px;
+  background: var(--border);
+}
+
+.calling-point {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 5px 0 5px 20px;
+  font-size: 12.5px;
+}
+
+.calling-point::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--text-dim);
+}
+
+.calling-point.departed::before {
+  border-color: var(--border);
+  background: var(--border);
+}
+
+.calling-point.current::before {
+  border-color: var(--mint);
+  background: var(--mint);
+  box-shadow: 0 0 0 3px var(--mint-bg);
+}
+
+.calling-point.cancelled .calling-point-due {
+  color: var(--red);
+}
+
+.calling-point.origin .calling-point-station,
+.calling-point.destination .calling-point-station {
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.calling-point-time {
+  flex-shrink: 0;
+  width: 40px;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.calling-point.departed .calling-point-time,
+.calling-point.departed .calling-point-station {
+  color: var(--text-dim);
+}
+
+.calling-point-station-container {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.calling-point-station {
+  color: var(--navy-soft);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calling-point-due {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.calling-point.expandable {
+  padding-left: 20px;
+}
+
+.calling-point-group-toggle {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--mint);
+  cursor: pointer;
+}
+
+.calling-point-group-toggle:hover {
+  text-decoration: underline;
+}
+
+.calling-points.expanded-group {
+  margin-top: 4px;
+  padding-left: 6px;
+}
+
+.calling-points-loading,
+.calling-points-empty {
+  font-size: 12px;
+  color: var(--text-dim);
 }

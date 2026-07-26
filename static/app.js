@@ -115,6 +115,9 @@ function renderTrains(trains, container, isPip = false, errorMessage = null) {
     }
 
     card.dataset.id = trainKey(t);
+    if (!isPip) {
+      card.dataset.uniqueIdentity = t.uniqueIdentity || "";
+    }
     card.querySelector(".card-time").textContent = t.time;
     card.querySelector(".card-dest").textContent = t.destination;
     card.querySelector(".card-plat").textContent = t.platformEstimated
@@ -137,6 +140,14 @@ function renderTrains(trains, container, isPip = false, errorMessage = null) {
     }
 
     container.appendChild(card);
+
+    // The board re-renders from scratch every update (new socket push, or
+    // a manual route change), which would otherwise silently collapse any
+    // calling-points panel the user had open. Re-fetch (cache-first) so it
+    // stays open and reflects the freshest calling points.
+    if (!isPip && expandedCallingPoints.has(trainKey(t))) {
+      openCallingPoints(card, trainKey(t));
+    }
   });
 }
 
@@ -154,6 +165,174 @@ function updateFeedErrorBanner(message) {
     el.classList.add("hidden");
   }
 }
+
+// --- Calling points (per-train stop-by-stop detail) ---
+const callingPointTemplate = document.getElementById("calling-point-template");
+const callingPointGroupTemplate = document.getElementById("calling-point-group-template");
+
+// Cache fetched calling points per service so re-opening a card (or a 30s
+// board refresh while it's expanded) doesn't re-hit the API every time.
+const callingPointsCache = new Map();
+// Which trains (by trainKey) currently have their calling points panel
+// open, so that state survives the board re-rendering on every update.
+const expandedCallingPoints = new Set();
+
+function callingPointsCacheKey(uniqueIdentity) {
+  return uniqueIdentity;
+}
+
+function buildCallingPointLi(point) {
+  const li = callingPointTemplate.content.firstElementChild.cloneNode(true);
+  const classes = ["calling-point", point.status];
+  if (point.isOrigin) classes.push("origin");
+  if (point.isDestination) classes.push("destination");
+  if (point.isCurrent) classes.push("current");
+  li.className = classes.join(" ");
+  li.querySelector(".calling-point-time").textContent = point.time;
+  li.querySelector(".calling-point-station").textContent = point.station;
+  li.querySelector(".calling-point-due").textContent = point.expected;
+  return li;
+}
+
+// Groups the flat calling-point list the way real UK departure boards do:
+// origin, destination, and the current/tracked station are always visible,
+// and any run of already-departed intermediate stops in between collapses
+// behind a "+N stops" toggle so a long route stays scannable.
+function renderCallingPointsList(listEl, points) {
+  listEl.innerHTML = "";
+  if (!points || points.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "calling-points-empty";
+    empty.textContent = "No calling point detail available for this service.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  const lastIndex = points.length - 1;
+  let i = 0;
+  while (i <= lastIndex) {
+    const point = points[i];
+    const isEdge = i === 0 || i === lastIndex;
+    const collapsible = !isEdge && !point.isCurrent && point.status === "departed";
+
+    if (!collapsible) {
+      listEl.appendChild(buildCallingPointLi(point));
+      i += 1;
+      continue;
+    }
+
+    const groupStart = i;
+    while (
+      i <= lastIndex &&
+      i !== lastIndex &&
+      !points[i].isCurrent &&
+      points[i].status === "departed"
+    ) {
+      i += 1;
+    }
+    const groupPoints = points.slice(groupStart, i);
+
+    if (groupPoints.length === 1) {
+      listEl.appendChild(buildCallingPointLi(groupPoints[0]));
+      continue;
+    }
+
+    const groupLi = callingPointGroupTemplate.content.firstElementChild.cloneNode(true);
+    const toggle = groupLi.querySelector(".calling-point-group-toggle");
+    const nestedList = groupLi.querySelector(".calling-points.expanded-group");
+    toggle.textContent = `⋯ ${groupPoints.length} stops`;
+    groupPoints.forEach((gp) => nestedList.appendChild(buildCallingPointLi(gp)));
+    toggle.addEventListener("click", () => {
+      const willOpen = nestedList.classList.contains("hidden");
+      nestedList.classList.toggle("hidden", !willOpen);
+      toggle.textContent = willOpen
+        ? `▲ Hide ${groupPoints.length} stops`
+        : `⋯ ${groupPoints.length} stops`;
+    });
+    listEl.appendChild(groupLi);
+  }
+}
+
+async function loadCallingPoints(uniqueIdentity) {
+  const cacheKey = callingPointsCacheKey(uniqueIdentity);
+  if (callingPointsCache.has(cacheKey)) {
+    return callingPointsCache.get(cacheKey);
+  }
+  const res = await fetch(`/api/calling-points/${encodeURIComponent(uniqueIdentity)}`);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error((data && data.error) || "Couldn't load calling points.");
+  }
+  callingPointsCache.set(cacheKey, data.points || []);
+  return data.points || [];
+}
+
+async function openCallingPoints(card, key) {
+  const wrap = card.querySelector(".calling-points-wrap");
+  const statusEl = card.querySelector(".calling-points-status");
+  const listEl = card.querySelector(".calling-points");
+  const toggle = card.querySelector(".calling-points-toggle");
+  const { uniqueIdentity } = card.dataset;
+
+  wrap.classList.remove("hidden");
+  if (toggle) toggle.setAttribute("aria-expanded", "true");
+  expandedCallingPoints.add(key);
+
+  if (!uniqueIdentity) {
+    statusEl.textContent = "Calling points aren't available for this train.";
+    statusEl.classList.remove("hidden");
+    listEl.innerHTML = "";
+    return;
+  }
+
+  const cacheKey = callingPointsCacheKey(uniqueIdentity);
+  if (callingPointsCache.has(cacheKey)) {
+    statusEl.classList.add("hidden");
+    renderCallingPointsList(listEl, callingPointsCache.get(cacheKey));
+    return;
+  }
+
+  statusEl.textContent = "Loading calling points…";
+  statusEl.classList.remove("hidden");
+  listEl.innerHTML = "";
+
+  try {
+    const points = await loadCallingPoints(uniqueIdentity);
+    // The card may have re-rendered (and this exact node been replaced)
+    // while the fetch was in flight - re-look-up the live elements by id
+    // rather than trusting the closed-over references are still attached.
+    const liveCard = boardRows.querySelector(`.card[data-id="${CSS.escape(key)}"]`);
+    const liveList = liveCard ? liveCard.querySelector(".calling-points") : listEl;
+    const liveStatus = liveCard ? liveCard.querySelector(".calling-points-status") : statusEl;
+    liveStatus.classList.add("hidden");
+    renderCallingPointsList(liveList, points);
+  } catch (err) {
+    statusEl.textContent = err.message || "Couldn't load calling points.";
+    statusEl.classList.remove("hidden");
+  }
+}
+
+function closeCallingPoints(card, key) {
+  const wrap = card.querySelector(".calling-points-wrap");
+  const toggle = card.querySelector(".calling-points-toggle");
+  wrap.classList.add("hidden");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+  expandedCallingPoints.delete(key);
+}
+
+// Delegated so it keeps working as rows re-render every update
+boardRows.addEventListener("click", (e) => {
+  const btn = e.target.closest(".calling-points-toggle");
+  if (!btn) return;
+  const card = btn.closest(".card");
+  if (!card) return;
+  const key = card.dataset.id;
+  if (expandedCallingPoints.has(key)) {
+    closeCallingPoints(card, key);
+  } else {
+    openCallingPoints(card, key);
+  }
+});
 
 // --- Socket.IO live connection ---
 const socket = io();

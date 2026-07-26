@@ -89,22 +89,54 @@
           <path d="M5 8h14" stroke="currentColor" stroke-width="1.6"/>
         </svg>
       </div>
-      <div class="card-main">
-        <div class="card-time"></div>
-        <div class="card-dest"></div>
-        <div class="card-plat"></div>
-      </div>
-      <div class="card-status">
-        <span class="card-operator"></span>
-        <span class="status-pill"></span>
-        <button type="button" class="notify-toggle" aria-pressed="false" title="Notify me if this train is delayed or cancelled">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 3a5 5 0 0 0-5 5v2.6c0 .5-.15.99-.42 1.4L5 14.5c-.6.9.04 2.1 1.12 2.1h11.76c1.08 0 1.72-1.2 1.12-2.1l-1.58-2.5a2.5 2.5 0 0 1-.42-1.4V8a5 5 0 0 0-5-5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-            <path d="M9.5 19a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-          </svg>
-        </button>
+      <div class="card-body">
+        <div class="card-row">
+          <div class="card-main">
+            <div class="card-time"></div>
+            <div class="card-dest"></div>
+            <div class="card-plat"></div>
+          </div>
+          <div class="card-status">
+            <span class="card-operator"></span>
+            <span class="status-pill"></span>
+            <button type="button" class="notify-toggle" aria-pressed="false" title="Notify me if this train is delayed or cancelled">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 3a5 5 0 0 0-5 5v2.6c0 .5-.15.99-.42 1.4L5 14.5c-.6.9.04 2.1 1.12 2.1h11.76c1.08 0 1.72-1.2 1.12-2.1l-1.58-2.5a2.5 2.5 0 0 1-.42-1.4V8a5 5 0 0 0-5-5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <path d="M9.5 19a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button type="button" class="calling-points-toggle" aria-expanded="false" title="Show calling points">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="calling-points-wrap hidden">
+          <p class="calling-points-status"></p>
+          <ul class="calling-points"></ul>
+        </div>
       </div>
     </div>
+  </template>
+
+  <!-- Template used to render one calling point row -->
+  <template id="calling-point-template">
+    <li class="calling-point">
+      <div class="calling-point-time"></div>
+      <div class="calling-point-station-container">
+        <div class="calling-point-station"></div>
+        <div class="calling-point-due"></div>
+      </div>
+    </li>
+  </template>
+
+  <!-- Template for the collapsed "N stops" group between origin and the next visible point -->
+  <template id="calling-point-group-template">
+    <li class="calling-point expandable">
+      <button type="button" class="calling-point-group-toggle"></button>
+      <ul class="calling-points expanded-group hidden"></ul>
+    </li>
   </template>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>

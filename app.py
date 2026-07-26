@@ -201,6 +201,13 @@ def normalize_service_to_train(service, train_id):
     operator_code = operator.get("code")
     operator_name = operator.get("name")
 
+    # uniqueIdentity (e.g. "gb-nr:C82320:2026-07-26") is what RTT's
+    # /rtt/service lookup needs to fetch this service's full calling points
+    # - see fetch_calling_points() below. It's deliberately NOT
+    # underscore-prefixed so public_payload() keeps it and the client can
+    # request the calling points for a given card.
+    unique_identity = schedule_metadata.get("uniqueIdentity")
+
     return {
         "id": train_id,
         "destination": destination,
@@ -212,6 +219,7 @@ def normalize_service_to_train(service, train_id):
         "mode": mode,
         "operatorCode": operator_code,
         "operatorName": operator_name,
+        "uniqueIdentity": unique_identity,
         "_scheduled_dt": scheduled_dt,
         "_delay_minutes": delay_minutes,
     }
@@ -354,6 +362,106 @@ def fetch_rtt_services():
     return payload.get("services", [])
 
 
+def _calling_point_status(scheduled_dt, is_cancelled, now):
+    """Classifies a single calling point for display, mirroring the
+    departed / current / future states used on real UK calling-point lists."""
+    if is_cancelled:
+        return "cancelled"
+    if scheduled_dt and scheduled_dt <= now:
+        return "departed"
+    return "future"
+
+
+def normalize_calling_point(location, now, current_short_codes=None):
+    """Convert one entry from RTT's /rtt/service "locations" array into the
+    shape the calling-points UI needs. Each entry nests its timing under
+    "temporalData" (departure/arrival blocks using the same
+    scheduleAdvertised/scheduleInternal/realtimeForecast/isCancelled fields
+    as the main location-listing endpoint), and identifies the station via
+    "location.shortCodes" (a list, since a station can have more than one
+    code) rather than a single "crs"."""
+    temporal_data = location.get("temporalData", {}) or {}
+    departure_block = temporal_data.get("departure") if isinstance(temporal_data.get("departure"), dict) else None
+    arrival_block = temporal_data.get("arrival") if isinstance(temporal_data.get("arrival"), dict) else None
+    # Prefer departure (what a departure board cares about) but fall back to
+    # arrival for the terminating stop, which typically has no departure block.
+    primary_block = departure_block or arrival_block or {}
+
+    is_cancelled = bool(primary_block.get("isCancelled"))
+    scheduled_dt = None
+    for field in ["scheduleAdvertised", "scheduleInternal"]:
+        value = primary_block.get(field)
+        if value:
+            scheduled_dt = parse_datetime(value)
+            if scheduled_dt:
+                break
+
+    forecast_dt = None
+    forecast_value = primary_block.get("realtimeForecast")
+    if forecast_value:
+        forecast_dt = parse_datetime(forecast_value)
+
+    if is_cancelled:
+        expected_label = "Cancelled"
+    elif forecast_dt and scheduled_dt and forecast_dt > scheduled_dt:
+        expected_label = f"Exp {forecast_dt.strftime('%H:%M')}"
+    else:
+        expected_label = "On time"
+
+    loc_info = location.get("location", {}) or {}
+    short_codes = loc_info.get("shortCodes") or []
+    is_current = bool(current_short_codes) and bool(set(short_codes) & set(current_short_codes))
+
+    return {
+        "station": loc_info.get("description") or "Unknown",
+        "time": scheduled_dt.strftime("%H:%M") if scheduled_dt else "—",
+        "expected": expected_label,
+        "status": _calling_point_status(scheduled_dt, is_cancelled, now),
+        "isCurrent": is_current,
+        "_scheduled_dt": scheduled_dt,
+    }
+
+
+def fetch_calling_points(unique_identity, current_short_codes=None):
+    """Fetch the full stop-by-stop calling points for one service from
+    RTT's /rtt/service lookup, keyed by its uniqueIdentity (e.g.
+    "gb-nr:C82320:2026-07-26" - namespace:identity:departureDate, taken
+    straight from that service's scheduleMetadata.uniqueIdentity)."""
+    url = f"{RTT_BASE_URL}/rtt/service?uniqueIdentity={unique_identity}"
+
+    token = get_access_token()
+    try:
+        payload = _rtt_request(url, token)
+    except RttTokenExpiredError:
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(url, token)
+
+    if isinstance(payload, dict) and payload.get("error") == "Invalid or expired token":
+        token = get_access_token(force_refresh=True)
+        payload = _rtt_request(url, token)
+
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError(f"RTT service error: {payload['error']}")
+
+    service_block = payload.get("service", {}) if isinstance(payload, dict) else {}
+    raw_locations = service_block.get("locations", []) if isinstance(service_block, dict) else []
+
+    now = datetime.now()
+    points = [normalize_calling_point(loc, now, current_short_codes) for loc in raw_locations]
+    points.sort(key=lambda p: (p["_scheduled_dt"] is None, p["_scheduled_dt"]))
+
+    for point in points:
+        del point["_scheduled_dt"]
+    if points:
+        points[0]["isOrigin"] = True
+        points[-1]["isDestination"] = True
+    for point in points:
+        point.setdefault("isOrigin", False)
+        point.setdefault("isDestination", False)
+
+    return points
+
+
 def fetch_stops_from_api():
     """Fetch the full station list from /data/stops, refreshing the access token once if it's stale."""
     token = get_access_token()
@@ -486,6 +594,21 @@ def index():
 @app.route("/api/stops")
 def api_stops():
     return jsonify({"stops": get_stops()})
+
+
+@app.route("/api/calling-points/<path:unique_identity>")
+def api_calling_points(unique_identity):
+    """Stop-by-stop calling points for one train, fetched on demand when a
+    card is expanded on the board (rather than upfront for every train, to
+    avoid a burst of extra RTT requests on every 30s refresh)."""
+    with route_lock:
+        current_short_codes = [current_route["from"]] if current_route.get("from") else None
+    try:
+        points = fetch_calling_points(unique_identity, current_short_codes=current_short_codes)
+    except Exception as exc:
+        print(f"[calling-points] {unique_identity} failed: {exc}", flush=True)
+        return jsonify({"error": "Couldn't load calling points for this train."}), 502
+    return jsonify({"points": points})
 
 
 @socketio.on("connect")
