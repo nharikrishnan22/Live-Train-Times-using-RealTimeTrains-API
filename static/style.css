@@ -830,3 +830,71 @@ body {
   border-color: var(--red);
   background: var(--red);
 }
+
+/* Ensure the list has relative positioning to anchor the new lines */
+.calling-points-list {
+  position: relative;
+  background-image: none !important; /* Force override old gradient */
+}
+
+/* The thin grey background line for the upcoming journey */
+.calling-points-list::before {
+  content: '';
+  position: absolute;
+  top: 11px;
+  bottom: 11px;
+  left: 11px; /* Adjust this left offset if your line needs shifting */
+  width: 2px;
+  background-color: #9e9e9e; /* Light grey */
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+/* The thick colored bar (green or red) for completed journey */
+.calling-points-list::after {
+  content: '';
+  position: absolute;
+  top: 11px;
+  left: 11px; /* Must match the ::before left property */
+  width: 8px; /* Thickness of the completed bar */
+  background-color: var(--progress-color, #00a000);
+  height: calc(var(--progress-height, 0px) - 11px);
+  transform: translateX(-50%);
+  border-radius: 4px;
+  z-index: 2;
+}
+
+/* The new exact-current-location indicator (White circle, black border) */
+.train-progress-dot {
+  position: absolute;
+  left: 11px; /* Must match line offsets */
+  width: 14px;
+  height: 14px;
+  background-color: #fff;
+  border: 3px solid #222; /* Bold black border */
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+}
+
+/* Small grey dots for future stations */
+.calling-point.future::before,
+.calling-point-group.future::before {
+  content: '';
+  position: absolute;
+  left: 11px; /* Match line offsets */
+  top: 11px; /* Centers the dot on the text vertically */
+  width: 8px;
+  height: 8px;
+  background-color: #9e9e9e; /* Light grey */
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+}
+
+/* Ensure passed stations have no dot, allowing the thick bar to remain solid */
+.calling-point.departed::before,
+.calling-point-group.departed::before {
+  display: none;
+}
+

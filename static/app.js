@@ -271,7 +271,12 @@ function buildCallingPointSegments(points, startIdx, endIdx) {
   while (i <= endIdx) {
     const point = points[i];
     const isEdge = i === startIdx || i === endIdx;
-    const collapsible = !isEdge && !point.isCurrent && point.status === "departed";
+    const collapsible = !isEdge && !point.isCurrent && (
+      point.status === "departed" || 
+      point.status === "passed" || 
+      point.status === "arrived" ||
+      (point.expected && point.expected.toLowerCase().includes("departed"))
+    );
 
     if (!collapsible) {
       segments.push({ kind: "single", points: [point] });
@@ -332,125 +337,199 @@ function getPointMinutes(point) {
   return timeToMinutes(str);
 }
 
-// Calculates the exact pixel offset for the progress line by interpolating 
-// proportionally between station stop times based on the current system clock.
-function calculateProgressDotY(listEl) {
-  const children = Array.from(listEl.children);
-  if (children.length === 0) return 0;
-
-  const visibleItems = [];
-
-  children.forEach(child => {
-    if (child.classList.contains("calling-point-group")) {
-      if (!child.classList.contains("is-open")) {
-        // Closed group: represents a block of points at this element's offset
-        const points = child._points || [];
-        if (points.length > 0) {
-          const firstPt = points[0];
-          const lastPt = points[points.length - 1];
-          visibleItems.push({
-            dotY: child.offsetTop + 11,
-            startTime: getPointMinutes(firstPt),
-            endTime: getPointMinutes(lastPt)
-          });
-        }
-      }
-      // If the group is open, skip the group header because its individual 
-      // points are rendered as separate .calling-point elements below it.
-    } else if (child.classList.contains("calling-point")) {
-      const points = child._points || [];
-      if (points.length > 0) {
-        const pt = points[0];
-        visibleItems.push({
-          dotY: child.offsetTop + 11,
-          startTime: getPointMinutes(pt),
-          endTime: getPointMinutes(pt)
-        });
-      }
-    }
-  });
-
-  if (visibleItems.length === 0) return 0;
-
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-
-  const validItems = visibleItems.filter(item => item.startTime !== null);
-  if (validItems.length === 0) {
-    return visibleItems[visibleItems.length - 1].dotY;
-  }
-
-  // If current time is before the first visible stop
-  if (currentMinutes <= validItems[0].startTime) {
-    const first = validItems[0];
-    const second = validItems.find(item => item.startTime > first.startTime);
-    if (second) {
-      const timeSpan = second.startTime - first.startTime;
-      const ySpan = second.dotY - first.dotY;
-      if (timeSpan > 0) {
-        const ratio = (currentMinutes - first.startTime) / timeSpan;
-        return Math.max(0, first.dotY + ratio * ySpan);
-      }
-    }
-    return Math.max(0, first.dotY - 20);
-  }
-
-  // If current time is past or at the last visible stop
-  const lastValid = validItems[validItems.length - 1];
-  if (currentMinutes >= lastValid.startTime) {
-    return lastValid.dotY;
-  }
-
-  // Interpolate smoothly between the two surrounding station stops
-  for (let i = 0; i < validItems.length - 1; i++) {
-    const cur = validItems[i];
-    const next = validItems[i + 1];
-    if (currentMinutes >= cur.startTime && currentMinutes <= next.startTime) {
-      const timeSpan = next.startTime - cur.startTime;
-      const ySpan = next.dotY - cur.dotY;
-      if (timeSpan <= 0) return cur.dotY;
-      const ratio = (currentMinutes - cur.startTime) / timeSpan;
-      return cur.dotY + ratio * ySpan;
-    }
-  }
-
-  return lastValid.dotY;
-}
-
-// Colours the connecting line and sets its length based on proportional time interpolation past passed stations
-function applyProgressLineColor(listEl, originPoint, targetNode) {
+function applyProgressLineColor(listEl, points, startIdx) {
+  const originPoint = points[startIdx];
   const color = callingPointOnTimeColor(originPoint);
 
-  if (!listEl || listEl.children.length === 0) {
-    listEl.style.setProperty(
-      "--progress-gradient",
-      `linear-gradient(to bottom,var(--border),var(--border))`
-    );
-    return;
+  if (!listEl || listEl.children.length === 0) return;
+
+  // 1. Force the list to allow absolute positioning and strip original styling
+  listEl.style.setProperty("position", "relative", "important");
+  listEl.style.setProperty("background", "transparent", "important");
+  
+  const TRACK_AXIS = 20; // Places the exact center of our track 20px from the left edge
+
+  // 2. Inject Bulletproof Override CSS
+  const styleId = "tracker-custom-styles-v6";
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      /* Force massive padding so text NEVER overlaps our custom line */
+      .calling-point, .calling-point-group {
+         padding-left: 50px !important; 
+         position: relative !important;
+         z-index: 5 !important;
+         background: transparent !important;
+      }
+      /* Hide native app dots/lines aggressively */
+      .calling-point::before, .calling-point::after, .calling-point-icon,
+      .calling-point-group::before, .calling-point-group::after {
+         display: none !important; 
+      }
+      
+      /* Pure DOM Track Elements */
+      .custom-track-bg {
+         position: absolute !important; left: ${TRACK_AXIS}px !important;
+         width: 2px !important; background-color: #9e9e9e !important;
+         transform: translateX(-50%) !important; z-index: 1 !important;
+      }
+      .custom-track-fill {
+         position: absolute !important; left: ${TRACK_AXIS}px !important;
+         width: 6px !important; border-radius: 3px !important;
+         background-color: var(--progress-color, #00a000) !important;
+         transform: translateX(-50%) !important; z-index: 2 !important;
+         transition: height 0.3s ease !important;
+      }
+      .train-progress-dot {
+         position: absolute !important; left: ${TRACK_AXIS}px !important;
+         width: 14px !important; height: 14px !important;
+         background-color: #fff !important; border: 3px solid #222 !important;
+         border-radius: 50% !important; transform: translate(-50%, -50%) !important;
+         z-index: 4 !important; box-sizing: border-box !important;
+         transition: top 0.3s ease !important;
+      }
+      .custom-future-dot {
+         position: absolute !important; left: ${TRACK_AXIS}px !important;
+         width: 8px !important; height: 8px !important;
+         background-color: #9e9e9e !important; border-radius: 50% !important;
+         transform: translate(-50%, -50%) !important; z-index: 3 !important;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
-  const dotY = calculateProgressDotY(listEl);
-  const height = listEl.offsetHeight;
-  const pct = height > 0 ? Math.max(0, Math.min(100, (dotY / height) * 100)) : 0;
+  // 3. Wait for layout to finish to calculate precise Y coordinates
+  requestAnimationFrame(() => {
+      const getMinutes = (pt) => {
+         if (!pt) return null;
+         const timeStr = pt.expected || pt.actual || pt.time || "";
+         const match = timeStr.match(/(\d{2}):(\d{2})/);
+         if (match && !timeStr.toLowerCase().includes("delayed") && !timeStr.toLowerCase().includes("cancelled") && !timeStr.toLowerCase().includes("on time")) {
+             return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+         }
+         // Fallback explicitly to pt.time if "On time" is triggered
+         const fb = (pt.time || "").match(/(\d{2}):(\d{2})/);
+         return fb ? parseInt(fb[1], 10) * 60 + parseInt(fb[2], 10) : null;
+      };
 
-  listEl.style.setProperty(
-    "--progress-gradient",
-    `linear-gradient(
-      to bottom,
-      ${color} 0%,
-      ${color} ${pct}%,
-      var(--border) ${pct}%,
-      var(--border) 100%
-    )`
-  );
+      const now = new Date();
+      let currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+      let timePoints = points.map(pt => ({ pt, mins: getMinutes(pt) }));
+      
+      for (let i = 1; i < timePoints.length; i++) {
+         if (timePoints[i].mins !== null && timePoints[i-1].mins !== null) {
+            if (timePoints[i].mins < timePoints[i-1].mins - 60) {
+               for (let j = i; j < timePoints.length; j++) {
+                  if (timePoints[j].mins !== null) timePoints[j].mins += 24 * 60;
+               }
+            }
+         }
+      }
+
+      if (timePoints.length > 0 && timePoints[0].mins !== null) {
+         if (currentMinutes < timePoints[0].mins && (timePoints[0].mins - currentMinutes > 12 * 60)) {
+            currentMinutes += 24 * 60;
+         }
+      }
+
+      // Filter out our injected DOM elements so we only process actual station rows
+      const items = Array.from(listEl.children).filter(c => 
+         !c.classList.contains("custom-track-bg") && 
+         !c.classList.contains("custom-track-fill") && 
+         !c.classList.contains("train-progress-dot") && 
+         !c.classList.contains("custom-future-dot")
+      );
+      
+      let anchorIdx = -1;
+      for (let i = 0; i < timePoints.length; i++) {
+         if (timePoints[i].mins !== null && timePoints[i].mins <= currentMinutes) {
+            anchorIdx = i;
+         }
+      }
+
+      // Dynamically find the exact center of the text row based on its physical height
+      const getVisualY = (pt) => {
+         let node = items.find(c => c._points && c._points.length === 1 && c._points[0] === pt);
+         if (!node) node = items.find(c => c._points && c._points.includes(pt));
+         return (node && typeof node.offsetTop === 'number') ? node.offsetTop + (node.offsetHeight / 2) : null;
+      };
+
+      let dotY = 0;
+      if (anchorIdx === -1) {
+         const firstY = getVisualY(points[0]);
+         if (firstY !== null) dotY = Math.max(0, firstY - 20);
+      } else if (anchorIdx === timePoints.length - 1) {
+         const lastY = getVisualY(points[anchorIdx]);
+         if (lastY !== null) dotY = lastY;
+      } else {
+         const anchorPt = timePoints[anchorIdx];
+         const nextPt = timePoints[anchorIdx + 1];
+         const anchorY = getVisualY(anchorPt.pt);
+         const nextY = getVisualY(nextPt.pt);
+
+         if (anchorY !== null && nextY !== null) {
+            const timeDiff = nextPt.mins - anchorPt.mins;
+            if (anchorY === nextY || timeDiff <= 0) {
+               dotY = anchorY;
+            } else {
+               const ratio = (currentMinutes - anchorPt.mins) / timeDiff;
+               const clampedRatio = Math.max(0, Math.min(1, ratio));
+               dotY = anchorY + clampedRatio * (nextY - anchorY);
+            }
+         } else if (anchorY !== null) {
+            dotY = anchorY;
+         }
+      }
+
+      const safeDotY = isNaN(dotY) ? 0 : dotY;
+      listEl.style.setProperty("--progress-color", color);
+
+      // --- NEW BULLETPROOF DOM RENDERING ---
+      const firstChildY = items.length > 0 ? items[0].offsetTop + (items[0].offsetHeight / 2) : 0;
+      const lastChildY = items.length > 0 ? items[items.length - 1].offsetTop + (items[items.length - 1].offsetHeight / 2) : 0;
+
+      // 1. Build Thin Grey Track
+      let trackBg = listEl.querySelector(".custom-track-bg");
+      if (!trackBg) { trackBg = document.createElement("div"); trackBg.className = "custom-track-bg"; listEl.appendChild(trackBg); }
+      trackBg.style.top = `${firstChildY}px`;
+      trackBg.style.height = `${Math.max(0, lastChildY - firstChildY)}px`;
+
+      // 2. Build Thick Colored Fill Track
+      let trackFill = listEl.querySelector(".custom-track-fill");
+      if (!trackFill) { trackFill = document.createElement("div"); trackFill.className = "custom-track-fill"; listEl.appendChild(trackFill); }
+      trackFill.style.top = `${firstChildY}px`;
+      trackFill.style.height = `${Math.max(0, safeDotY - firstChildY)}px`;
+
+      // 3. Build Live Train Ring
+      let trainDot = listEl.querySelector(".train-progress-dot");
+      if (!trainDot) { trainDot = document.createElement("div"); trainDot.className = "train-progress-dot"; listEl.appendChild(trainDot); }
+      trainDot.style.top = `${safeDotY}px`;
+
+      // 4. Update Future Dots & Apply Faded Text
+      // Clean up old injected future dots to prevent clutter when toggling collapsed views
+      listEl.querySelectorAll(".custom-future-dot").forEach(el => el.remove());
+
+      items.forEach(child => {
+        if (child.classList.contains("calling-points-empty")) return;
+        
+        const childY = child.offsetTop + (child.offsetHeight / 2);
+        if (childY <= safeDotY) {
+          child.style.opacity = "0.5"; // Fade passed text
+        } else {
+          child.style.opacity = "1"; // Highlight future text
+          
+          // Inject a physical small grey dot precisely onto the track
+          let fDot = document.createElement("div");
+          fDot.className = "custom-future-dot";
+          fDot.style.top = `${childY}px`;
+          listEl.appendChild(fDot);
+        }
+      });
+  });
 }
 
-// Renders the calling-point list trimmed to the user's actual journey: the
-// full list of stops still comes back from the API, but anything before the
-// station the user searched for (unless that IS the train's true origin) and
-// anything after the station they searched as their destination gets hidden
-// behind a collapsed group, the same way already-departed intermediate stops
-// are collapsed.
 function renderCallingPointsList(listEl, points) {
   listEl.innerHTML = "";
   if (!points || points.length === 0) {
@@ -479,34 +558,18 @@ function renderCallingPointsList(listEl, points) {
   }
 
   const segments = buildCallingPointSegments(points, startIdx, endIdx);
+  const refreshProgressLine = () => applyProgressLineColor(listEl, points, startIdx);
 
-  // Work out which segment represents the train's current position (or, if
-  // the feed doesn't flag one, the last stop it's known to have departed).
-  let currentSegmentIndex = segments.findIndex((seg) => seg.points.some((p) => p.isCurrent));
-  if (currentSegmentIndex === -1) {
-    for (let s = segments.length - 1; s >= 0; s -= 1) {
-      if (segments[s].points.every((p) => p.status === "departed")) {
-        currentSegmentIndex = s;
-        break;
-      }
-    }
-  }
-
-  const refreshProgressLine = () => applyProgressLineColor(listEl, points[startIdx], targetNode);
-
-  let targetNode = null;
-  segments.forEach((seg, idx) => {
-    let node;
+  segments.forEach((seg) => {
     if (seg.kind === "single") {
-      node = buildCallingPointLi(seg.points[0]);
+      const node = buildCallingPointLi(seg.points[0]);
       listEl.appendChild(node);
     } else {
-      node = appendCollapsedGroup(listEl, seg.points, {
+      appendCollapsedGroup(listEl, seg.points, {
         forceCollapse: seg.kind === "edge",
         onToggle: refreshProgressLine,
       });
     }
-    if (idx === currentSegmentIndex) targetNode = node;
   });
 
   refreshProgressLine();
