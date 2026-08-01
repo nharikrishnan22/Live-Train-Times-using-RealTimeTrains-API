@@ -1,18 +1,20 @@
 # Train Tracker
 
-A small Flask app that shows live-updating train departures, with a
-floating "mini player" powered by the **Document Picture-in-Picture**
+A small Flask app that shows live-updating train departures with data from Real Time Trains API, with a
+floating "mini player" using by the **Document Picture-in-Picture**
 API — the same kind of always-on-top window YouTube uses, but showing
 your next train instead of a video.
 
+![alt text](screenshots/pip.png)
+
+![alt text](screenshots/card.png)
+
 ## Features
 
-- Flask + Flask-SocketIO backend pushing live updates from the RTT API
-- Direct integration with the RTT location endpoint for live service data
-- Trainline-inspired card layout: white rounded cards, navy/mint/pink
-  colour palette, status pills for On time / Delayed / Cancelled
-- Floating "mini player" powered by Document Picture-in-Picture
-- Graceful fallback message if your browser doesn't support PiP
+*   **Flask + Flask-SocketIO backend:** Pushes live updates directly to connected clients in real time.
+*   **Calling Points:** Users can click to expand a train card and view full, stop-by-stop calling points with predicted arrival times.
+*   **Desktop Notifications:** Includes an option to enable desktop alerts, notifying you the moment a specific train is delayed or cancelled.
+*   **Document Picture-in-Picture:** Includes a floating "mini player" that stays on top of other windows (supported in Chrome/Edge 116+).
 
 ## Setup
 
@@ -22,14 +24,10 @@ source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Set the RTT environment variables before running the app:
+You will need to use your API token from https://api-portal.rtt.io/. Set it as a RTT environment variable in an .env file in root of project before running the app:
 
-```bash
-set RTT_BEARER_TOKEN=your-token-here
-set RTT_NAMESPACE=gb-nr
-set RTT_LOCATION_CODE=CLPHMJN
-set RTT_API_VERSION=2025-10-25
-set RTT_TIME_WINDOW=60
+```
+RTT_TOKEN=<Your RTT API Token>
 ```
 
 Then start the app:
