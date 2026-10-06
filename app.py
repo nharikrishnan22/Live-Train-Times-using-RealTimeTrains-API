@@ -11,6 +11,7 @@ import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
+from functools import lru_cache
 from urllib.parse import urlencode
 
 print("[1/5] Python starting, imports beginning...", flush=True)
@@ -37,7 +38,7 @@ RTT_BASE_URL = os.getenv("RTT_BASE_URL", "https://data.rtt.io").rstrip("/")
 RTT_NAMESPACE = os.getenv("RTT_NAMESPACE", "gb-nr")
 # Plain short code, e.g. "RDG" - the namespace is already part of the URL
 # path (/{RTT_NAMESPACE}/location), so it must NOT be repeated here.
-RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "RDG")
+RTT_LOCATION_CODE = os.getenv("RTT_LOCATION_CODE", "NRW")
 # Credential used to obtain a short-lived access token from
 # /api/get_access_token. This is NOT the token sent to the location
 # endpoint directly - see fetch_access_token() below.
@@ -48,7 +49,7 @@ RTT_ACCESS_TOKEN_URL = os.getenv(
     "RTT_ACCESS_TOKEN_URL", f"{RTT_BASE_URL}/api/get_access_token"
 )
 RTT_TIME_WINDOW = int(os.getenv("RTT_TIME_WINDOW", "360"))
-RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "PAD")
+RTT_FILTER_DESTINATION = os.getenv("RTT_FILTER_DESTINATION", "LST")
 RTT_TIME_FROM = os.getenv("RTT_TIME_FROM")
 RTT_DETAILED = os.getenv("RTT_DETAILED", "true").lower() == "true"
 RTT_STOPS_URL = os.getenv("RTT_STOPS_URL", f"{RTT_BASE_URL}/data/stops")
@@ -362,17 +363,23 @@ def fetch_rtt_services():
     return payload.get("services", [])
 
 
-def _calling_point_status(scheduled_dt, is_cancelled, now):
+def _calling_point_status(actual_dt, is_cancelled, now):
     """Classifies a single calling point for display, mirroring the
     departed / current / future states used on real UK calling-point lists."""
     if is_cancelled:
         return "cancelled"
-    if scheduled_dt and scheduled_dt <= now:
-        return "departed"
+    if actual_dt:
+        comparison_now = now
+        if actual_dt.tzinfo is not None and now.tzinfo is None:
+            comparison_now = now.astimezone(actual_dt.tzinfo)
+        elif actual_dt.tzinfo is None and now.tzinfo is not None:
+            comparison_now = now.astimezone().replace(tzinfo=None)
+        if actual_dt <= comparison_now:
+            return "departed"
     return "future"
 
 
-def normalize_calling_point(location, now, current_short_codes=None):
+def normalize_calling_point(location, now, current_short_codes=None, to_short_codes=None):
     """Convert one entry from RTT's /rtt/service "locations" array into the
     shape the calling-points UI needs. Each entry nests its timing under
     "temporalData" (departure/arrival blocks using the same
@@ -387,7 +394,16 @@ def normalize_calling_point(location, now, current_short_codes=None):
     # arrival for the terminating stop, which typically has no departure block.
     primary_block = departure_block or arrival_block or {}
 
-    is_cancelled = bool(primary_block.get("isCancelled"))
+    # A curtailed train can arrive here even though its onward departure
+    # is cancelled. Keep that recorded arrival as the last reached stop.
+    terminates_here = bool(
+        departure_block and departure_block.get("isCancelled") and arrival_block
+        and _calling_point_status(parse_datetime(arrival_block.get("realtimeActual")), False, now) == "departed"
+    )
+    if terminates_here:
+        primary_block = arrival_block
+
+    is_cancelled = bool(primary_block.get("isCancelled")) and not terminates_here
     scheduled_dt = None
     for field in ["scheduleAdvertised", "scheduleInternal"]:
         value = primary_block.get(field)
@@ -396,36 +412,37 @@ def normalize_calling_point(location, now, current_short_codes=None):
             if scheduled_dt:
                 break
 
-    forecast_dt = None
-    if primary_block.get("realtimeActual") and datetime.now() >= scheduled_dt:
-        forecast_value = primary_block.get("realtimeActual")
-        forecast_dt = parse_datetime(forecast_value)
-    else:
-        forecast_value = primary_block.get("realtimeForecast")
-        forecast_dt = parse_datetime(forecast_value)
+    actual_dt = parse_datetime(primary_block.get("realtimeActual"))
+    forecast_dt = parse_datetime(primary_block.get("realtimeForecast"))
+    live_dt = actual_dt or forecast_dt
 
     if is_cancelled:
         expected_label = "Cancelled"
-    elif forecast_dt and scheduled_dt and forecast_dt > scheduled_dt:
-        expected_label = forecast_dt.strftime('%H:%M')
+    elif live_dt:
+        expected_label = live_dt.strftime("%H:%M")
     else:
         expected_label = "On time"
 
     loc_info = location.get("location", {}) or {}
     short_codes = loc_info.get("shortCodes") or []
     is_current = bool(current_short_codes) and bool(set(short_codes) & set(current_short_codes))
+    is_to_station = bool(to_short_codes) and bool(set(short_codes) & set(to_short_codes))
 
     return {
         "station": loc_info.get("description") or "Unknown",
         "time": scheduled_dt.strftime("%H:%M") if scheduled_dt else "—",
+        "liveTime": live_dt.strftime("%H:%M") if live_dt and not is_cancelled else None,
+        "actual": actual_dt.strftime("%H:%M") if actual_dt else None,
         "expected": expected_label,
-        "status": _calling_point_status(scheduled_dt, is_cancelled, now),
+        "status": "arrived" if terminates_here else _calling_point_status(actual_dt, is_cancelled, now),
+        "isTerminated": terminates_here,
         "isCurrent": is_current,
+        "isToStation": is_to_station,
         "_scheduled_dt": scheduled_dt,
     }
 
 
-def fetch_calling_points(unique_identity, current_short_codes=None):
+def fetch_calling_points(unique_identity, current_short_codes=None, to_short_codes=None):
     """Fetch the full stop-by-stop calling points for one service from
     RTT's /rtt/service lookup, keyed by its uniqueIdentity (e.g.
     "gb-nr:C82320:2026-07-26" - namespace:identity:departureDate, taken
@@ -450,7 +467,10 @@ def fetch_calling_points(unique_identity, current_short_codes=None):
     raw_locations = service_block.get("locations", []) if isinstance(service_block, dict) else []
 
     now = datetime.now()
-    points = [normalize_calling_point(loc, now, current_short_codes) for loc in raw_locations]
+    points = [
+        normalize_calling_point(loc, now, current_short_codes, to_short_codes)
+        for loc in raw_locations
+    ]
     points.sort(key=lambda p: (p["_scheduled_dt"] is None, p["_scheduled_dt"]))
 
     for point in points:
@@ -463,6 +483,17 @@ def fetch_calling_points(unique_identity, current_short_codes=None):
         point.setdefault("isDestination", False)
 
     return points
+
+
+@lru_cache(maxsize=256)
+def scheduled_service_destination(unique_identity):
+    """Keep the scheduled terminus even when RTT shortens a cancelled service."""
+    points = fetch_calling_points(unique_identity)
+    destination = next((p.get("station") for p in reversed(points) if p.get("isDestination")), None)
+    if not destination or destination == "Unknown":
+        # Failed lookups must be retried on the next refresh, not cached.
+        raise ValueError("Scheduled destination unavailable")
+    return destination
 
 
 def fetch_stops_from_api():
@@ -526,6 +557,14 @@ def fetch_and_normalize_trains():
         normalize_service_to_train(service, idx + 1)
         for idx, service in enumerate(services[:10])
     ]
+    for train in normalized:
+        if train["status"] == "Cancelled" and train.get("uniqueIdentity"):
+            try:
+                train["destination"] = scheduled_service_destination(train["uniqueIdentity"])
+            except Exception:
+                # A detail outage should not prevent the departure board
+                # from updating. Keep the listing destination and retry.
+                pass
     normalized.sort(key=lambda t: t["_scheduled_dt"])
     return normalized
 
@@ -606,8 +645,13 @@ def api_calling_points(unique_identity):
     avoid a burst of extra RTT requests on every 30s refresh)."""
     with route_lock:
         current_short_codes = [current_route["from"]] if current_route.get("from") else None
+        to_short_codes = [current_route["to"]] if current_route.get("to") else None
     try:
-        points = fetch_calling_points(unique_identity, current_short_codes=current_short_codes)
+        points = fetch_calling_points(
+            unique_identity,
+            current_short_codes=current_short_codes,
+            to_short_codes=to_short_codes,
+        )
     except Exception as exc:
         print(f"[calling-points] {unique_identity} failed: {exc}", flush=True)
         return jsonify({"error": "Couldn't load calling points for this train."}), 502

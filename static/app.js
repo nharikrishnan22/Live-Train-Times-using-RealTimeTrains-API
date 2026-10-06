@@ -175,14 +175,21 @@ const callingPointTemplate = document.getElementById("calling-point-template");
 const callingPointGroupTemplate = document.getElementById("calling-point-group-template");
 
 // Cache fetched calling points per service so re-opening a card (or a 30s
-// board refresh while it's expanded) doesn't re-hit the API every time.
+// board refresh while it's expanded) can reuse a recent response.
 const callingPointsCache = new Map();
+const CALLING_POINTS_CACHE_MS = 30_000;
 // Which trains (by trainKey) currently have their calling points panel
 // open, so that state survives the board re-rendering on every update.
 const expandedCallingPoints = new Set();
 
 function callingPointsCacheKey(uniqueIdentity) {
   return uniqueIdentity;
+}
+
+function cachedCallingPoints(uniqueIdentity) {
+  const cached = callingPointsCache.get(callingPointsCacheKey(uniqueIdentity));
+  return cached && Date.now() - cached.fetchedAt < CALLING_POINTS_CACHE_MS
+    ? cached.points : null;
 }
 
 // Appends a collapsed "+N stops" toggle row. `forceCollapse` is used for the
@@ -222,6 +229,7 @@ function appendCollapsedGroup(listEl, groupPoints, { forceCollapse = false, suff
 
   const toggle = groupLi.querySelector(".calling-point-group-toggle");
   const count = groupPoints.length;
+  groupLi.classList.add(groupPoints.every((p) => p.status === "departed") ? "departed" : "future");
   const stopWord = count === 1 ? "stop" : "stops";
   const closedText = `⋯ ${count} ${stopWord}${suffix}`;
   toggle.textContent = closedText;
@@ -271,7 +279,7 @@ function buildCallingPointSegments(points, startIdx, endIdx) {
   while (i <= endIdx) {
     const point = points[i];
     const isEdge = i === startIdx || i === endIdx;
-    const collapsible = !isEdge && !point.isCurrent && (
+    const collapsible = !isEdge && !point.isCurrent && !point.isTerminated && (
       point.status === "departed" || 
       point.status === "passed" || 
       point.status === "arrived" ||
@@ -289,7 +297,8 @@ function buildCallingPointSegments(points, startIdx, endIdx) {
       i <= endIdx &&
       i !== endIdx &&
       !points[i].isCurrent &&
-      points[i].status === "departed"
+      !points[i].isTerminated &&
+      ["departed", "passed", "arrived"].includes(points[i].status)
     ) {
       i += 1;
     }
@@ -313,7 +322,8 @@ function callingPointOnTimeColor(point) {
   const expected = timeToMinutes(extractClockTime(point.expected));
   if (scheduled == null || expected == null) return "var(--mint)";
   let diff = expected - scheduled;
-  if (diff < 0) diff += 24 * 60;
+  if (diff < -12 * 60) diff += 24 * 60;
+  if (diff > 12 * 60) diff -= 24 * 60;
   return diff > 0 ? "var(--red)" : "var(--mint)";
 }
 
@@ -323,10 +333,26 @@ function buildCallingPointLi(point) {
   if (point.isOrigin) classes.push("origin");
   if (point.isDestination) classes.push("destination");
   if (point.isCurrent) classes.push("current");
+  if (point.isTerminated) classes.push("terminated");
   li.className = classes.join(" ");
-  li.querySelector(".calling-point-time").textContent = point.time;
+  li.style.setProperty("--calling-point-color", callingPointOnTimeColor(point));
+  li.querySelector(".calling-point-time").textContent = point.time || "—";
   li.querySelector(".calling-point-station").textContent = point.station;
-  li.querySelector(".calling-point-due").textContent = point.expected;
+  const note = li.querySelector(".calling-point-note");
+  note.textContent = point.isTerminated ? "Arrived · Ends here" : "";
+  note.classList.toggle("hidden", !point.isTerminated);
+  const due = li.querySelector(".calling-point-due");
+  const hasChangedTime = Boolean(point.liveTime && point.liveTime !== point.time);
+  if (point.status === "cancelled") {
+    due.textContent = "Cancelled";
+  } else if (["departed", "arrived"].includes(point.status) && point.actual) {
+    due.textContent = point.actual;
+  } else if (hasChangedTime) {
+    due.textContent = point.liveTime;
+  } else {
+    due.textContent = point.liveTime || point.expected === "On time" ? "On time" : "—";
+  }
+  due.classList.toggle("changed", hasChangedTime);
   li._points = [point]; // Store point data directly on the DOM node
   return li;
 }
@@ -347,6 +373,14 @@ function applyProgressLineColor(listEl, points, startIdx) {
   listEl.style.setProperty("position", "relative", "important");
   listEl.style.setProperty("background", "transparent", "important");
   
+  // Set the real color immediately (not just inside the rAF below) so the
+  // browser never has to paint the CSS's hardcoded `#00a000` fallback -
+  // a flat green that reads differently from the theme's actual --mint
+  // "on time" accent and, worse, keeps showing indefinitely if rAF ever
+  // gets throttled (e.g. a backgrounded tab) or never resolves the live
+  // element for this list in time.
+  listEl.style.setProperty("--progress-color", color);
+
   const TRACK_AXIS = 20; // Places the exact center of our track 20px from the left edge
 
   // 2. Inject Bulletproof Override CSS
@@ -403,14 +437,12 @@ function applyProgressLineColor(listEl, points, startIdx) {
   requestAnimationFrame(() => {
       const getMinutes = (pt) => {
          if (!pt) return null;
-         const timeStr = pt.expected || pt.actual || pt.time || "";
+         const timeStr = pt.liveTime || "";
          const match = timeStr.match(/(\d{2}):(\d{2})/);
          if (match && !timeStr.toLowerCase().includes("delayed") && !timeStr.toLowerCase().includes("cancelled") && !timeStr.toLowerCase().includes("on time")) {
              return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
          }
-         // Fallback explicitly to pt.time if "On time" is triggered
-         const fb = (pt.time || "").match(/(\d{2}):(\d{2})/);
-         return fb ? parseInt(fb[1], 10) * 60 + parseInt(fb[2], 10) : null;
+         return null;
       };
 
       const now = new Date();
@@ -484,7 +516,6 @@ function applyProgressLineColor(listEl, points, startIdx) {
       }
 
       const safeDotY = isNaN(dotY) ? 0 : dotY;
-      listEl.style.setProperty("--progress-color", color);
 
       // --- NEW BULLETPROOF DOM RENDERING ---
       const firstChildY = items.length > 0 ? items[0].offsetTop + (items[0].offsetHeight / 2) : 0;
@@ -507,7 +538,8 @@ function applyProgressLineColor(listEl, points, startIdx) {
       if (!trainDot) { trainDot = document.createElement("div"); trainDot.className = "train-progress-dot"; listEl.appendChild(trainDot); }
       trainDot.style.top = `${safeDotY}px`;
 
-      // 4. Update Future Dots & Apply Faded Text
+      // 4. Update future dots. Text follows reported stop status, so a
+      // forecast passing its time cannot fade an unconfirmed station.
       // Clean up old injected future dots to prevent clutter when toggling collapsed views
       listEl.querySelectorAll(".custom-future-dot").forEach(el => el.remove());
 
@@ -515,11 +547,7 @@ function applyProgressLineColor(listEl, points, startIdx) {
         if (child.classList.contains("calling-points-empty")) return;
         
         const childY = child.offsetTop + (child.offsetHeight / 2);
-        if (childY <= safeDotY) {
-          child.style.opacity = "0.5"; // Fade passed text
-        } else {
-          child.style.opacity = "1"; // Highlight future text
-          
+        if (!child.classList.contains("departed") && !child.classList.contains("arrived")) {
           // Inject a physical small grey dot precisely onto the track
           let fDot = document.createElement("div");
           fDot.className = "custom-future-dot";
@@ -544,12 +572,22 @@ function renderCallingPointsList(listEl, points) {
   const route = window.TrainTracker.currentRoute || {};
   const norm = (s) => (s || "").trim().toLowerCase();
 
-  let startIdx = route.fromDescription
-    ? points.findIndex((p) => norm(p.station) === norm(route.fromDescription))
-    : -1;
-  let endIdx = route.toDescription
-    ? points.findIndex((p) => norm(p.station) === norm(route.toDescription))
-    : -1;
+  // Prefer the backend's isCurrent/isToStation flags, which are matched by
+  // station short code (CRS) - reliable even when RTT's own calling-point
+  // description for a station differs slightly from the /api/stops
+  // description used elsewhere (spacing, suffixes, etc). Falling straight
+  // back to a description-string match (and then to index 0/last) risks
+  // silently landing on the train's actual origin/destination instead of
+  // the user's boarding/alighting station, which then colors the whole
+  // progress line off that wrong point's on-time status.
+  let startIdx = points.findIndex((p) => p.isCurrent);
+  if (startIdx === -1 && route.fromDescription) {
+    startIdx = points.findIndex((p) => norm(p.station) === norm(route.fromDescription));
+  }
+  let endIdx = points.findIndex((p) => p.isToStation);
+  if (endIdx === -1 && route.toDescription) {
+    endIdx = points.findIndex((p) => norm(p.station) === norm(route.toDescription));
+  }
   if (startIdx === -1) startIdx = 0;
   if (endIdx === -1) endIdx = lastIndex;
   if (startIdx > endIdx) {
@@ -577,15 +615,14 @@ function renderCallingPointsList(listEl, points) {
 
 async function loadCallingPoints(uniqueIdentity) {
   const cacheKey = callingPointsCacheKey(uniqueIdentity);
-  if (callingPointsCache.has(cacheKey)) {
-    return callingPointsCache.get(cacheKey);
-  }
+  const cached = cachedCallingPoints(uniqueIdentity);
+  if (cached) return cached;
   const res = await fetch(`/api/calling-points/${encodeURIComponent(uniqueIdentity)}`);
   const data = await res.json();
   if (!res.ok) {
     throw new Error((data && data.error) || "Couldn't load calling points.");
   }
-  callingPointsCache.set(cacheKey, data.points || []);
+  callingPointsCache.set(cacheKey, { points: data.points || [], fetchedAt: Date.now() });
   return data.points || [];
 }
 
@@ -607,10 +644,10 @@ async function openCallingPoints(card, key) {
     return;
   }
 
-  const cacheKey = callingPointsCacheKey(uniqueIdentity);
-  if (callingPointsCache.has(cacheKey)) {
+  const cached = cachedCallingPoints(uniqueIdentity);
+  if (cached) {
     statusEl.classList.add("hidden");
-    renderCallingPointsList(listEl, callingPointsCache.get(cacheKey));
+    renderCallingPointsList(listEl, cached);
     return;
   }
 

@@ -682,7 +682,7 @@ body {
   position: relative;
   display: flex;
   gap: 10px;
-  padding: 5px 0 5px 20px;
+  padding: 14px 0 14px 20px;
   font-size: 12.5px;
 }
 
@@ -727,26 +727,34 @@ body {
   z-index: 1;
 }
 
-.calling-point.cancelled .calling-point-due {
-  color: var(--red);
+.calling-point.cancelled .calling-point-due,
+.calling-point-due.changed {
+  color: #f00028;
 }
 
-.calling-point.origin .calling-point-station,
-.calling-point.destination .calling-point-station {
-  font-weight: 800;
-  color: var(--navy);
+.calling-point-times {
+  flex-shrink: 0;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .calling-point-time {
-  flex-shrink: 0;
-  width: 40px;
-  font-weight: 700;
-  color: var(--navy);
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #333530;
 }
 
 .calling-point.departed .calling-point-time,
-.calling-point.departed .calling-point-station {
+.calling-point.departed .calling-point-station,
+.calling-point-group.departed .calling-point-group-toggle {
   color: var(--text-dim);
+}
+
+.calling-point.departed {
+  opacity: 0.5;
 }
 
 .calling-point-station-container {
@@ -756,20 +764,35 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  padding-top: 4px;
 }
 
 .calling-point-station {
-  color: var(--navy-soft);
+  color: var(--calling-point-color, var(--mint));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.calling-point-due {
-  flex-shrink: 0;
+.calling-point.terminated .calling-point-station-container {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.calling-point-note {
   font-size: 11px;
   color: var(--text-dim);
+}
+
+.calling-point-due {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 400;
+  color: #757575;
 }
 
 .calling-point-group-toggle {
