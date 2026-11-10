@@ -2,8 +2,7 @@
 
 A small Flask app that shows live-updating train departures with data from Real Time Trains API, with a
 floating "mini player" using by the **Document Picture-in-Picture**
-API — the same kind of always-on-top window YouTube uses, but showing
-your next train instead of a video.
+API
 
 ![alt text](screenshots/pip.png)
 
